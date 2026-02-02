@@ -1,0 +1,1345 @@
+@page "/settings"
+@using VideoSplitter.Services
+@using VideoSplitter.Models
+@inject ISettingsService SettingsService
+@inject ITranscriptService TranscriptService
+@inject IPromptService PromptService
+@inject ISegmentService SegmentService
+@inject IJSRuntime JSRuntime
+
+<PageTitle>Settings - VideoSplitter</PageTitle>
+
+<h1>Settings</h1>
+
+@if (settings == null)
+{
+    <div class="text-center">
+        <div class="spinner-border" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+}
+else
+{
+    <EditForm Model="@settings" OnValidSubmit="@SaveSettings">
+        <div class="row">
+            <div class="col-lg-8">
+                <!-- Transcript Settings -->
+                <div class="card mb-4">
+                    <div class="card-header" @onclick="() => ToggleSection(ref transcriptExpanded)" style="cursor: pointer;">
+                        <h4 class="d-flex justify-content-between align-items-center mb-0">
+                            <span>Transcript Generation</span>
+                            <span class="oi @(transcriptExpanded ? "oi-chevron-top" : "oi-chevron-bottom")"></span>
+                        </h4>
+                    </div>
+                    <div class="collapse @(transcriptExpanded ? "show" : "")" id="transcriptSection">
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <label class="form-label">Transcript Provider</label>
+                                <InputSelect @bind-Value="settings.TranscriptProvider" class="form-select" @onchange="OnTranscriptProviderChanged">
+                                    <option value="@TranscriptProvider.Local">Local (Whisper.NET)</option>
+                                    <option value="@TranscriptProvider.Azure">Azure AI Speech</option>
+                                </InputSelect>
+                            </div>
+
+                            @if (settings.TranscriptProvider == TranscriptProvider.Local)
+                            {
+                                <div class="mb-3">
+                                    <label class="form-label">Whisper Model Status</label>
+                                    <div class="d-flex align-items-center">
+                                        <button class="btn btn-outline-primary btn-sm me-2" type="button" @onclick="CheckWhisperStatus">
+                                            @if (checkingWhisper)
+                                            {
+                                                <span class="spinner-border spinner-border-sm" role="status"></span>
+                                            }
+                                            else
+                                            {
+                                                <span class="oi oi-reload"></span>
+                                            }
+                                            Check Status
+                                        </button>
+                                        <span class="badge @(whisperModelAvailable ? "bg-success" : "bg-warning")">
+                                            @whisperModelStatus
+                                        </span>
+                                    </div>
+                                    @if (!string.IsNullOrEmpty(whisperStatusMessage))
+                                    {
+                                        <div class="small text-muted mt-1">
+                                            @whisperStatusMessage
+                                        </div>
+                                    }
+                                </div>
+                                @if (checkingWhisper)
+                                { }
+                                else
+                                {
+                                    @if (!whisperModelAvailable && !whisperModelDownloading)
+                                    {
+                                        <div class="mb-3">
+                                            <div class="alert alert-info" role="alert">
+                                                <h6 class="alert-heading">Whisper Model Required</h6>
+                                                <p class="mb-2">The Whisper.NET model is required for local transcription. The application can automatically download the model for you.</p>
+                                                <button class="btn btn-primary btn-sm" type="button" @onclick="DownloadWhisperModel">
+                                                    <span class="oi oi-cloud-download"></span> Download Model (~142MB)
+                                                </button>
+                                            </div>
+                                        </div>
+                                    }
+
+                                    @if (whisperModelDownloading)
+                                    {
+                                        <div class="mb-3">
+                                            <div class="alert alert-primary" role="alert">
+                                                <h6 class="alert-heading">
+                                                    <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                                                    Downloading Whisper Model
+                                                </h6>
+                                                <p class="mb-2">@whisperDownloadProgress</p>
+                                                <div class="progress">
+                                                    <div class="progress-bar progress-bar-striped progress-bar-animated"
+                                                         role="progressbar" style="width: 50%" aria-valuenow="50" aria-valuemin="0" aria-valuemax="100">
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    }
+
+                                    @if (whisperModelAvailable)
+                                    {
+                                        <div class="mb-3">
+                                            <div class="alert alert-success" role="alert">
+                                                <span class="oi oi-check me-2"></span>
+                                                Whisper model is ready for local transcription.
+                                                <button class="btn btn-outline-success btn-sm ms-2" type="button" @onclick="InitializeWhisperModel">
+                                                    <span class="oi oi-cog"></span> Initialize Model
+                                                </button>
+                                            </div>
+                                        </div>
+                                    }
+                                }
+                            }
+
+                            @if (settings.TranscriptProvider == TranscriptProvider.Azure)
+                            {
+                                <div class="mb-3">
+                                    <label for="azureSpeechKey" class="form-label">Azure Speech API Key</label>
+                                    <div class="input-group">
+                                        <InputText @bind-Value="settings.AzureSpeech.AzureSpeechApiKey" class="form-control" type="password" id="azureSpeechKey" placeholder="Enter your Azure Speech API key" />
+                                        <button class="btn btn-outline-secondary" type="button" @onclick="() => TestAzureSpeech()">
+                                            @if (testingAzureSpeech)
+                                            {
+                                                <span class="spinner-border spinner-border-sm" role="status"></span>
+                                            }
+                                            else
+                                            {
+                                                <span class="oi oi-check"></span>
+                                            }
+                                            Test
+                                        </button>
+                                    </div>
+                                    @if (!string.IsNullOrEmpty(azureSpeechTestResult))
+                                    {
+                                        <div class="small mt-1 @(azureSpeechTestSuccess ? "text-success" : "text-danger")">
+                                            @azureSpeechTestResult
+                                        </div>
+                                    }
+                                </div>
+
+                                <div class="mb-3">
+                                    <label for="azureSpeechRegion" class="form-label">Azure Speech Region</label>
+                                    <InputText @bind-Value="settings.AzureSpeech.AzureSpeechRegion" class="form-control" id="azureSpeechRegion" placeholder="e.g., westus2" />
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+
+                <!-- LLM Settings -->
+                <div class="card mb-4">
+                    <div class="card-header" @onclick="() => ToggleSection(ref llmExpanded)" style="cursor: pointer;">
+                        <h4 class="d-flex justify-content-between align-items-center mb-0">
+                            <span>AI Segment Generation</span>
+                            <span class="oi @(llmExpanded ? "oi-chevron-top" : "oi-chevron-bottom")"></span>
+                        </h4>
+                    </div>
+                    <div class="collapse @(llmExpanded ? "show" : "")" id="llmSection">
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <label class="form-label">LLM Provider</label>
+                                <InputSelect @bind-Value="settings.LlmProvider" class="form-select">
+                                    <option value="@LlmProvider.Local">Local (Ollama)</option>
+                                    <option value="@LlmProvider.OpenAI">OpenAI</option>
+                                    <option value="@LlmProvider.Anthropic">Anthropic Claude</option>
+                                    <option value="@LlmProvider.AzureOpenAI">Azure OpenAI</option>
+                                    <option value="@LlmProvider.GoogleGemini">Google Gemini</option>
+                                </InputSelect>
+                            </div>
+
+                            @if (settings.LlmProvider == LlmProvider.Local)
+                            {
+                                <div class="mb-3">
+                                    <label class="form-label">Ollama Status</label>
+                                    <div class="d-flex align-items-center">
+                                        <button class="btn btn-outline-primary btn-sm me-2" type="button" @onclick="CheckOllamaStatus">
+                                            @if (checkingOllama)
+                                            {
+                                                <span class="spinner-border spinner-border-sm" role="status"></span>
+                                            }
+                                            else
+                                            {
+                                                <span class="oi oi-reload"></span>
+                                            }
+                                            Check Status
+                                        </button>
+                                        <span class="badge @(ollamaRunning ? "bg-success" : "bg-danger")">
+                                            @(ollamaRunning ? "Running" : "Not Running")
+                                        </span>
+                                    </div>
+                                </div>
+
+                                @if (ollamaRunning && ollamaModels.Any())
+                                {
+                                    <div class="mb-3">
+                                        <label class="form-label">Ollama Model</label>
+                                        <InputSelect @bind-Value="settings.Ollama.Model" class="form-select">
+                                            <option value="">Select a model...</option>
+                                            @foreach (var model in ollamaModels)
+                                            {
+                                                <option value="@model">@model</option>
+                                            }
+                                        </InputSelect>
+                                    </div>
+                                }
+                            }
+                            else if (settings.LlmProvider == LlmProvider.OpenAI)
+                            {
+                                <div class="mb-3">
+                                    <label for="openaiKey" class="form-label">OpenAI API Key</label>
+                                    <div class="input-group">
+                                        <InputText @bind-Value="settings.OpenAi.ApiKey" class="form-control" type="password" id="openaiKey" placeholder="sk-..." />
+                                        <button class="btn btn-outline-primary" type="button" @onclick="GetOpenAiModels" disabled="@(fetchingOpenAiModels || string.IsNullOrWhiteSpace(settings.OpenAi.ApiKey))">
+                                            @if (fetchingOpenAiModels)
+                                            {
+                                                <span class="spinner-border spinner-border-sm" role="status"></span>
+                                            }
+                                            else
+                                            {
+                                                <span class="oi oi-list"></span>
+                                            }
+                                            Get Models
+                                        </button>
+                                    </div>
+                                    @if (!string.IsNullOrEmpty(openAiModelsError))
+                                    {
+                                        <div class="small mt-1 text-danger">@openAiModelsError</div>
+                                    }
+                                </div>
+                                <div class="mb-3">
+                                    <label for="openaiModel" class="form-label">Model</label>
+                                    <div class="input-group">
+                                        @if (openAiModels.Any())
+                                        {
+                                            <InputSelect @bind-Value="settings.OpenAi.Model" class="form-select" id="openaiModel">
+                                                <option value="">Select a model...</option>
+                                                @foreach (var model in openAiModels)
+                                                {
+                                                    <option value="@model">@model</option>
+                                                }
+                                            </InputSelect>
+                                        }
+                                        else
+                                        {
+                                            <InputText @bind-Value="settings.OpenAi.Model" class="form-control" id="openaiModel" placeholder="gpt-4.1-mini" />
+                                        }
+                                        <button class="btn btn-outline-secondary" type="button" @onclick="TestOpenAi">
+                                            @if (testingOpenAi)
+                                            {
+                                                <span class="spinner-border spinner-border-sm" role="status"></span>
+                                            }
+                                            else
+                                            {
+                                                <span class="oi oi-check"></span>
+                                            }
+                                            Test
+                                        </button>
+                                    </div>
+                                    @if (!string.IsNullOrEmpty(openAiTestResult))
+                                    {
+                                        <div class="small mt-1 @(openAiTestSuccess ? "text-success" : "text-danger")">
+                                            @openAiTestResult
+                                        </div>
+                                    }
+                                    @if (openAiModels.Any())
+                                    {
+                                        <small class="text-muted">@openAiModels.Count models available</small>
+                                    }
+                                    else
+                                    {
+                                        <small class="text-muted">Enter your API key and click "Get Models" to load available models, or type a model name manually.</small>
+                                    }
+                                </div>
+                            }
+                            else if (settings.LlmProvider == LlmProvider.Anthropic)
+                            {
+                                <div class="mb-3">
+                                    <label for="anthropicKey" class="form-label">Anthropic API Key</label>
+                                    <div class="input-group">
+                                        <InputText @bind-Value="settings.Anthropic.ApiKey" class="form-control" type="password" id="anthropicKey" placeholder="sk-ant-..." />
+                                        <button class="btn btn-outline-primary" type="button" @onclick="GetAnthropicModels" disabled="@(fetchingAnthropicModels || string.IsNullOrWhiteSpace(settings.Anthropic.ApiKey))">
+                                            @if (fetchingAnthropicModels)
+                                            {
+                                                <span class="spinner-border spinner-border-sm" role="status"></span>
+                                            }
+                                            else
+                                            {
+                                                <span class="oi oi-list"></span>
+                                            }
+                                            Get Models
+                                        </button>
+                                    </div>
+                                    @if (!string.IsNullOrEmpty(anthropicModelsError))
+                                    {
+                                        <div class="small mt-1 text-danger">@anthropicModelsError</div>
+                                    }
+                                </div>
+                                <div class="mb-3">
+                                    <label for="anthropicModel" class="form-label">Model</label>
+                                    <div class="input-group">
+                                        @if (anthropicModels.Any())
+                                        {
+                                            <InputSelect @bind-Value="settings.Anthropic.Model" class="form-select" id="anthropicModel">
+                                                <option value="">Select a model...</option>
+                                                @foreach (var model in anthropicModels)
+                                                {
+                                                    <option value="@model">@model</option>
+                                                }
+                                            </InputSelect>
+                                        }
+                                        else
+                                        {
+                                            <InputText @bind-Value="settings.Anthropic.Model" class="form-control" id="anthropicModel" placeholder="claude-sonnet-4-20250514" />
+                                        }
+                                        <button class="btn btn-outline-secondary" type="button" @onclick="TestAnthropic">
+                                            @if (testingAnthropic)
+                                            {
+                                                <span class="spinner-border spinner-border-sm" role="status"></span>
+                                            }
+                                            else
+                                            {
+                                                <span class="oi oi-check"></span>
+                                            }
+                                            Test
+                                        </button>
+                                    </div>
+                                    @if (!string.IsNullOrEmpty(anthropicTestResult))
+                                    {
+                                        <div class="small mt-1 @(anthropicTestSuccess ? "text-success" : "text-danger")">
+                                            @anthropicTestResult
+                                        </div>
+                                    }
+                                    @if (anthropicModels.Any())
+                                    {
+                                        <small class="text-muted">@anthropicModels.Count models available</small>
+                                    }
+                                    else
+                                    {
+                                        <small class="text-muted">Enter your API key and click "Get Models" to load available models, or type a model name manually.</small>
+                                    }
+                                </div>
+                            }
+                            else if (settings.LlmProvider == LlmProvider.AzureOpenAI)
+                            {
+                                <div class="mb-3">
+                                    <label for="azureOpenAiKey" class="form-label">Azure OpenAI API Key</label>
+                                    <InputText @bind-Value="settings.AzureOpenAi.ApiKey" class="form-control" type="password" id="azureOpenAiKey" placeholder="Enter your Azure OpenAI API key" />
+                                </div>
+
+                                <div class="mb-3">
+                                    <label for="azureOpenAiEndpoint" class="form-label">Azure OpenAI Endpoint</label>
+                                    <InputText @bind-Value="settings.AzureOpenAi.Endpoint" class="form-control" id="azureOpenAiEndpoint" placeholder="https://your-resource.openai.azure.com/" />
+                                </div>
+
+                                <div class="mb-3">
+                                    <label for="azureOpenAiDeployment" class="form-label">Deployment Name</label>
+                                    <div class="input-group">
+                                        <InputText @bind-Value="settings.AzureOpenAi.DeploymentName" class="form-control" id="azureOpenAiDeployment" placeholder="gpt-4o" />
+                                        <button class="btn btn-outline-secondary" type="button" @onclick="TestAzureOpenAi">
+                                            @if (testingAzureOpenAi)
+                                            {
+                                                <span class="spinner-border spinner-border-sm" role="status"></span>
+                                            }
+                                            else
+                                            {
+                                                <span class="oi oi-check"></span>
+                                            }
+                                            Test
+                                        </button>
+                                    </div>
+                                    @if (!string.IsNullOrEmpty(azureOpenAiTestResult))
+                                    {
+                                        <div class="small mt-1 @(azureOpenAiTestSuccess ? "text-success" : "text-danger")">
+                                            @azureOpenAiTestResult
+                                        </div>
+                                    }
+                                </div>
+                            }
+                            else if (settings.LlmProvider == LlmProvider.GoogleGemini)
+                            {
+                                <div class="mb-3">
+                                    <label for="googleApiKey" class="form-label">Google Gemini API Key</label>
+                                    <div class="input-group">
+                                        <InputText @bind-Value="settings.GoogleGemini.ApiKey" class="form-control" type="password" id="googleApiKey" placeholder="Enter your Gemini API key" />
+                                        <button class="btn btn-outline-primary" type="button" @onclick="GetGoogleGeminiModels" disabled="@(fetchingGoogleGeminiModels || string.IsNullOrWhiteSpace(settings.GoogleGemini.ApiKey))">
+                                            @if (fetchingGoogleGeminiModels)
+                                            {
+                                                <span class="spinner-border spinner-border-sm" role="status"></span>
+                                            }
+                                            else
+                                            {
+                                                <span class="oi oi-list"></span>
+                                            }
+                                            Get Models
+                                        </button>
+                                    </div>
+                                    @if (!string.IsNullOrEmpty(googleGeminiModelsError))
+                                    {
+                                        <div class="small mt-1 text-danger">@googleGeminiModelsError</div>
+                                    }
+                                </div>
+
+                                <div class="mb-3">
+                                    <label for="googleModelName" class="form-label">Model Name</label>
+                                    <div class="input-group">
+                                        @if (googleGeminiModels.Any())
+                                        {
+                                            <InputSelect @bind-Value="settings.GoogleGemini.Model" class="form-select" id="googleModelName">
+                                                <option value="">Select a model...</option>
+                                                @foreach (var model in googleGeminiModels)
+                                                {
+                                                    <option value="@model">@model</option>
+                                                }
+                                            </InputSelect>
+                                        }
+                                        else
+                                        {
+                                            <InputText @bind-Value="settings.GoogleGemini.Model" class="form-control" id="googleModelName" placeholder="gemini-2.5-pro" />
+                                        }
+                                        <button class="btn btn-outline-secondary" type="button" @onclick="TestGoogleGemini">
+                                            @if (testingGoogleGemini)
+                                            {
+                                                <span class="spinner-border spinner-border-sm" role="status"></span>
+                                            }
+                                            else
+                                            {
+                                                <span class="oi oi-check"></span>
+                                            }
+                                            Test
+                                        </button>
+                                    </div>
+                                    @if (!string.IsNullOrEmpty(googleGeminiTestResult))
+                                    {
+                                        <div class="small mt-1 @(googleGeminiTestSuccess ? "text-success" : "text-danger")">
+                                            @googleGeminiTestResult
+                                        </div>
+                                    }
+                                    @if (googleGeminiModels.Any())
+                                    {
+                                        <small class="text-muted">@googleGeminiModels.Count models available</small>
+                                    }
+                                    else
+                                    {
+                                        <small class="text-muted">Enter your API key and click "Get Models" to load available models, or type a model name manually.</small>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Segment Settings -->
+                <div class="card mb-4">
+                    <div class="card-header" @onclick="() => ToggleSection(ref segmentExpanded)" style="cursor: pointer;">
+                        <h4 class="d-flex justify-content-between align-items-center mb-0">
+                            <span>Segment Preferences</span>
+                            <span class="oi @(segmentExpanded ? "oi-chevron-top" : "oi-chevron-bottom")"></span>
+                        </h4>
+                    </div>
+                    <div class="collapse @(segmentExpanded ? "show" : "")" id="segmentSection">
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="segmentLength" class="form-label">Default Segment Length (seconds)</label>
+                                        <InputNumber @bind-Value="settings.DefaultSegmentLengthSeconds" class="form-control" id="segmentLength" min="15" max="300" />
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="segmentCount" class="form-label">Default Number of Segments</label>
+                                        <InputNumber @bind-Value="settings.DefaultSegmentCount" class="form-control" id="segmentCount" min="1" max="20" />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- AI Prompt Settings -->
+                <div class="card mb-4">
+                    <div class="card-header" @onclick="() => ToggleSection(ref promptExpanded)" style="cursor: pointer;">
+                        <h4 class="d-flex justify-content-between align-items-center mb-0">
+                            <span>AI Prompts</span>
+                            <span class="oi @(promptExpanded ? "oi-chevron-top" : "oi-chevron-bottom")"></span>
+                        </h4>
+                    </div>
+                    <div class="collapse @(promptExpanded ? "show" : "")" id="promptSection">
+                        <div class="card-body">
+                            <div class="alert alert-info">
+                                <h6 class="alert-heading">
+                                    <span class="oi oi-info me-2"></span>Placeholder Guide
+                                </h6>
+                                <p class="mb-2">Use these placeholders in your prompts - they will be automatically replaced:</p>
+                                <ul class="mb-0 small">
+                                    <li><code>{segmentCount}</code> - Replaced with the target number of segments to generate (from Segment Preferences)</li>
+                                    <li><code>{segmentLength}</code> - Replaced with the maximum segment length in seconds (from Segment Preferences)</li>
+                                    <li><code>{transcript}</code> - Replaced with the full video transcript (User Prompt only)</li>
+                                </ul>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="systemPrompt" class="form-label d-flex align-items-center">
+                                    System Prompt
+                                    <span class="ms-2 text-muted" style="cursor: help;" title="Defines the AI's role and behavior for analyzing video content">
+                                        <span class="oi oi-question-mark"></span>
+                                    </span>
+                                </label>
+                                <small class="text-muted d-block mb-2">
+                                    Configure how the AI should analyze and segment video content.
+                                </small>
+                                <InputTextArea @bind-Value="settings.SystemPrompt" class="form-control font-monospace" id="systemPrompt" rows="10" placeholder="Enter system prompt..." />
+                                <button class="btn btn-outline-secondary btn-sm mt-2" type="button" @onclick="ResetSystemPrompt">
+                                    <span class="oi oi-reload"></span> Reset to Default
+                                </button>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="userPrompt" class="form-label d-flex align-items-center">
+                                    User Prompt
+                                    <span class="ms-2 text-muted" style="cursor: help;" title="The instruction template sent with each transcript for segment generation">
+                                        <span class="oi oi-question-mark"></span>
+                                    </span>
+                                </label>
+                                <small class="text-muted d-block mb-2">
+                                    Define the instruction sent with each transcript. Must include <code>{transcript}</code> placeholder.
+                                </small>
+                                <InputTextArea @bind-Value="settings.UserPrompt" class="form-control font-monospace" id="userPrompt" rows="5" placeholder="Enter user prompt..." />
+                                <button class="btn btn-outline-secondary btn-sm mt-2" type="button" @onclick="ResetUserPrompt">
+                                    <span class="oi oi-reload"></span> Reset to Default
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- System Tools -->
+                <div class="card mb-4">
+                    <div class="card-header" @onclick="() => ToggleSection(ref systemToolsExpanded)" style="cursor: pointer;">
+                        <h4 class="d-flex justify-content-between align-items-center mb-0">
+                            <span>System Tools</span>
+                            <span class="oi @(systemToolsExpanded ? "oi-chevron-top" : "oi-chevron-bottom")"></span>
+                        </h4>
+                    </div>
+                    <div class="collapse @(systemToolsExpanded ? "show" : "")" id="systemToolsSection">
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <label class="form-label">FFmpeg Status</label>
+                                <div class="d-flex align-items-center">
+                                    <button class="btn btn-outline-primary btn-sm me-2" type="button" @onclick="CheckFFmpegStatus">
+                                        @if (checkingFFmpeg)
+                                        {
+                                            <span class="spinner-border spinner-border-sm" role="status"></span>
+                                        }
+                                        else
+                                        {
+                                            <span class="oi oi-reload"></span>
+                                        }
+                                        Check Status
+                                    </button>
+                                    <span class="badge @(ffmpegAvailable ? "bg-success" : "bg-danger")">
+                                        @(ffmpegAvailable ? "Available" : "Not Found")
+                                    </span>
+                                </div>
+                                @if (!ffmpegAvailable)
+                                {
+                                    <div class="small text-muted mt-1">
+                                        FFmpeg is required for video processing. Please install FFmpeg and make sure it's in your system PATH.
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Data Management -->
+                <div class="card mb-4">
+                    <div class="card-header" @onclick="() => ToggleSection(ref dataManagementExpanded)" style="cursor: pointer;">
+                        <h4 class="d-flex justify-content-between align-items-center mb-0">
+                            <span>Data Management</span>
+                            <span class="oi @(dataManagementExpanded ? "oi-chevron-top" : "oi-chevron-bottom")"></span>
+                        </h4>
+                    </div>
+                    <div class="collapse @(dataManagementExpanded ? "show" : "")" id="dataManagementSection">
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <h6>Delete All Segments</h6>
+                                <p class="text-muted small">This will permanently delete all segments from all projects, including any extracted clip files.</p>
+                                <button class="btn btn-danger btn-sm" type="button" @onclick="DeleteAllSegments" disabled="@deletingSegments">
+                                    @if (deletingSegments)
+                                    {
+                                        <span class="spinner-border spinner-border-sm" role="status"></span>
+                                    }
+                                    else
+                                    {
+                                        <span class="oi oi-trash"></span>
+                                    }
+                                    Delete All Segments
+                                </button>
+                                @if (!string.IsNullOrEmpty(deleteSegmentsResult))
+                                {
+                                    <div class="small mt-2 @(deleteSegmentsSuccess ? "text-success" : "text-danger")">
+                                        @deleteSegmentsResult
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Social Media Publishing Settings -->
+                <div class="card mb-4">
+                    <div class="card-header" @onclick="() => ToggleSection(ref socialMediaExpanded)" style="cursor: pointer;">
+                        <h4 class="d-flex justify-content-between align-items-center mb-0">
+                            <span>Social Media Publishing</span>
+                            <span class="oi @(socialMediaExpanded ? "oi-chevron-top" : "oi-chevron-bottom")"></span>
+                        </h4>
+                    </div>
+                    <div class="collapse @(socialMediaExpanded ? "show" : "")" id="socialMediaSection">
+                        <div class="card-body">
+                            <div class="alert alert-info mb-4">
+                                <h6 class="alert-heading">
+                                    <span class="oi oi-info me-2"></span>Setup Instructions
+                                </h6>
+                                <p class="mb-2">To enable publishing to social media platforms, you need to create developer accounts and obtain API credentials:</p>
+                                <ul class="mb-0 small">
+                                    <li><strong>TikTok:</strong> Create an app at <a href="https://developers.tiktok.com/" target="_blank" rel="noopener">developers.tiktok.com</a></li>
+                                    <li><strong>YouTube:</strong> Set up a project in <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a> and enable YouTube Data API v3</li>
+                                    <li><strong>Instagram:</strong> Create an app at <a href="https://developers.facebook.com/" target="_blank" rel="noopener">developers.facebook.com</a> (requires Business account)</li>
+                                </ul>
+                            </div>
+
+                            <!-- TikTok Settings -->
+                            <div class="mb-4">
+                                <h5 class="border-bottom pb-2">
+                                    <i class="fab fa-tiktok me-2"></i>TikTok
+                                </h5>
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="tiktokClientKey" class="form-label">Client Key</label>
+                                            <InputText @bind-Value="settings.SocialMedia.TikTok.ClientKey" class="form-control" type="password" id="tiktokClientKey" placeholder="Enter TikTok Client Key" />
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="tiktokClientSecret" class="form-label">Client Secret</label>
+                                            <InputText @bind-Value="settings.SocialMedia.TikTok.ClientSecret" class="form-control" type="password" id="tiktokClientSecret" placeholder="Enter TikTok Client Secret" />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- YouTube Settings -->
+                            <div class="mb-4">
+                                <h5 class="border-bottom pb-2">
+                                    <i class="fab fa-youtube me-2"></i>YouTube Shorts
+                                </h5>
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="youtubeClientId" class="form-label">Client ID</label>
+                                            <InputText @bind-Value="settings.SocialMedia.YouTube.ClientId" class="form-control" type="password" id="youtubeClientId" placeholder="Enter YouTube Client ID" />
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="youtubeClientSecret" class="form-label">Client Secret</label>
+                                            <InputText @bind-Value="settings.SocialMedia.YouTube.ClientSecret" class="form-control" type="password" id="youtubeClientSecret" placeholder="Enter YouTube Client Secret" />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Instagram Settings -->
+                            <div class="mb-4">
+                                <h5 class="border-bottom pb-2">
+                                    <i class="fab fa-instagram me-2"></i>Instagram Reels
+                                </h5>
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="instagramAppId" class="form-label">App ID</label>
+                                            <InputText @bind-Value="settings.SocialMedia.Instagram.AppId" class="form-control" type="password" id="instagramAppId" placeholder="Enter Instagram App ID" />
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="instagramAppSecret" class="form-label">App Secret</label>
+                                            <InputText @bind-Value="settings.SocialMedia.Instagram.AppSecret" class="form-control" type="password" id="instagramAppSecret" placeholder="Enter Instagram App Secret" />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="alert alert-warning">
+                                <span class="oi oi-warning me-2"></span>
+                                <strong>Note:</strong> After saving these settings, restart the application for the changes to take effect.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="d-flex justify-content-end">
+                    <button type="submit" class="btn btn-primary" disabled="@isSaving">
+                        @if (isSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm" role="status"></span>
+                        }
+                        else
+                        {
+                            <span class="oi oi-check"></span>
+                        }
+                        Save Settings
+                    </button>
+                </div>
+            </div>
+        </div>
+    </EditForm>
+}
+
+@code {
+    private AppSettings? settings;
+    private bool isSaving = false;
+
+    // Expandable section states
+    private bool transcriptExpanded = true;
+    private bool llmExpanded = true;
+    private bool segmentExpanded = false;
+    private bool promptExpanded = false;
+    private bool systemToolsExpanded = false;
+    private bool dataManagementExpanded = false;
+    private bool socialMediaExpanded = false;
+
+    // Test states
+    private bool testingAzureSpeech = false;
+    private string azureSpeechTestResult = string.Empty;
+    private bool azureSpeechTestSuccess = false;
+
+    private bool testingOpenAi = false;
+    private string openAiTestResult = string.Empty;
+    private bool openAiTestSuccess = false;
+
+    private bool testingAnthropic = false;
+    private string anthropicTestResult = string.Empty;
+    private bool anthropicTestSuccess = false;
+
+    private bool testingAzureOpenAi = false;
+    private string azureOpenAiTestResult = string.Empty;
+    private bool azureOpenAiTestSuccess = false;
+
+    private bool testingGoogleGemini = false;
+    private string googleGeminiTestResult = string.Empty;
+    private bool googleGeminiTestSuccess = false;
+
+    // OpenAI models
+    private bool fetchingOpenAiModels = false;
+    private List<string> openAiModels = [];
+    private string openAiModelsError = string.Empty;
+
+    // Anthropic models
+    private bool fetchingAnthropicModels = false;
+    private List<string> anthropicModels = [];
+    private string anthropicModelsError = string.Empty;
+
+    // Google Gemini models
+    private bool fetchingGoogleGeminiModels = false;
+    private List<string> googleGeminiModels = [];
+    private string googleGeminiModelsError = string.Empty;
+
+    private bool checkingOllama = false;
+    private bool ollamaRunning = false;
+    private IEnumerable<string> ollamaModels = new List<string>();
+
+    private bool checkingFFmpeg = false;
+    private bool ffmpegAvailable = false;
+
+    // Whisper model states
+    private bool checkingWhisper = false;
+    private bool whisperModelAvailable = false;
+    private bool whisperModelDownloading = false;
+    private string whisperModelStatus = "Unknown";
+    private string whisperStatusMessage = string.Empty;
+    private string whisperDownloadProgress = string.Empty;
+
+    // Data management states
+    private bool deletingSegments = false;
+    private string deleteSegmentsResult = string.Empty;
+    private bool deleteSegmentsSuccess = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        settings = await SettingsService.GetSettingsAsync();
+        await CheckSystemStatus();
+    }
+
+    private void ToggleSection(ref bool sectionState)
+    {
+        sectionState = !sectionState;
+        StateHasChanged();
+    }
+
+    private async Task ResetSystemPrompt()
+    {
+        if (settings == null) return;
+        
+        settings.SystemPrompt = await PromptService.LoadDefaultSystemPromptAsync();
+        StateHasChanged();
+    }
+
+    private async Task ResetUserPrompt()
+    {
+        if (settings == null) return;
+        
+        settings.UserPrompt = await PromptService.LoadDefaultUserPromptAsync();
+        StateHasChanged();
+    }
+
+    private async Task SaveSettings()
+    {
+        if (settings == null) return;
+
+        isSaving = true;
+        StateHasChanged();
+
+        try
+        {
+            await SettingsService.SaveSettingsAsync(settings);
+            await JSRuntime.InvokeVoidAsync("alert", "Settings saved successfully!");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error saving settings: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Failed to save settings. Please try again.");
+        }
+        finally
+        {
+            isSaving = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task CheckSystemStatus()
+    {
+        checkingOllama = true;
+        checkingFFmpeg = true;
+        checkingWhisper = true;
+        await CheckOllamaStatus();
+        await CheckFFmpegStatus();
+        await CheckWhisperStatus();
+    }
+
+    private async Task OnTranscriptProviderChanged(ChangeEventArgs e)
+    {
+        if (settings != null && e.Value != null)
+        {
+            if (Enum.TryParse<TranscriptProvider>(e.Value.ToString(), out var provider))
+            {
+                settings.TranscriptProvider = provider;
+
+                // Check Whisper status when switching to Local provider
+                if (provider == TranscriptProvider.Local)
+                {
+                    await CheckWhisperStatus();
+                }
+            }
+        }
+    }
+
+    private async Task CheckWhisperStatus()
+    {
+        checkingWhisper = true;
+        whisperStatusMessage = string.Empty;
+        StateHasChanged();
+
+        try
+        {
+            var status = await TranscriptService.GetModelStatusAsync();
+
+            whisperModelAvailable = status.IsAvailable;
+            whisperModelDownloading = status.IsDownloading;
+            whisperModelStatus = status.Status;
+
+            if (!status.IsAvailable && !status.IsDownloading)
+            {
+                whisperStatusMessage = $"Expected location: {TranscriptService.GetExpectedModelPath()}";
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error checking Whisper status: {ex.Message}");
+            whisperModelAvailable = false;
+            whisperModelStatus = "Error checking status";
+            whisperStatusMessage = ex.Message;
+        }
+        finally
+        {
+            checkingWhisper = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task DownloadWhisperModel()
+    {
+        whisperModelDownloading = true;
+        whisperDownloadProgress = "Starting download...";
+        StateHasChanged();
+
+        try
+        {
+            var progress = new Progress<string>(message =>
+            {
+                whisperDownloadProgress = message;
+                InvokeAsync(StateHasChanged);
+            });
+
+            var result = await TranscriptService.DownloadWhisperModelAsync(progress);
+
+            if (result.Success)
+            {
+                whisperModelAvailable = true;
+                whisperModelStatus = "Download completed";
+                whisperDownloadProgress = "Model ready for use!";
+            }
+            else
+            {
+                whisperDownloadProgress = $"Download failed: {result.Error}";
+                await JSRuntime.InvokeVoidAsync("alert", $"Failed to download Whisper model: {result.Error}");
+            }
+        }
+        catch (Exception ex)
+        {
+            whisperDownloadProgress = $"Download error: {ex.Message}";
+            await JSRuntime.InvokeVoidAsync("alert", $"Error downloading Whisper model: {ex.Message}");
+        }
+        finally
+        {
+            whisperModelDownloading = false;
+            StateHasChanged();
+
+            // Refresh status after download attempt
+            await Task.Delay(1000);
+            await CheckWhisperStatus();
+        }
+    }
+
+    private async Task InitializeWhisperModel()
+    {
+        checkingWhisper = true;
+        whisperStatusMessage = "Initializing model...";
+        StateHasChanged();
+
+        try
+        {
+            var progress = new Progress<string>(message =>
+            {
+                whisperStatusMessage = message;
+                InvokeAsync(StateHasChanged);
+            });
+
+            var result = await TranscriptService.InitializeWhisperModelAsync(progress);
+
+            if (result.Success)
+            {
+                whisperStatusMessage = "Model initialized successfully!";
+                await JSRuntime.InvokeVoidAsync("alert", "Whisper model initialized and ready for transcription!");
+            }
+            else
+            {
+                whisperStatusMessage = $"Initialization failed: {result.Error}";
+                await JSRuntime.InvokeVoidAsync("alert", $"Failed to initialize Whisper model: {result.Error}");
+            }
+        }
+        catch (Exception ex)
+        {
+            whisperStatusMessage = $"Initialization error: {ex.Message}";
+            await JSRuntime.InvokeVoidAsync("alert", $"Error initializing Whisper model: {ex.Message}");
+        }
+        finally
+        {
+            checkingWhisper = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task CheckOllamaStatus()
+    {
+        checkingOllama = true;
+        StateHasChanged();
+
+        try
+        {
+            ollamaRunning = await SettingsService.IsOllamaRunningAsync();
+            if (ollamaRunning)
+            {
+                ollamaModels = await SettingsService.GetOllamaModelsAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error checking Ollama status: {ex.Message}");
+            ollamaRunning = false;
+        }
+        finally
+        {
+            checkingOllama = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task CheckFFmpegStatus()
+    {
+        checkingFFmpeg = true;
+        StateHasChanged();
+
+        try
+        {
+            ffmpegAvailable = await SettingsService.IsFFmpegAvailableAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error checking FFmpeg status: {ex.Message}");
+            ffmpegAvailable = false;
+        }
+        finally
+        {
+            checkingFFmpeg = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task TestAzureSpeech()
+    {
+        if (settings == null || string.IsNullOrWhiteSpace(settings.AzureSpeech.AzureSpeechApiKey) || string.IsNullOrWhiteSpace(settings.AzureSpeech.AzureSpeechRegion))
+        {
+            azureSpeechTestResult = "Please enter API key and region";
+            azureSpeechTestSuccess = false;
+            return;
+        }
+
+        testingAzureSpeech = true;
+        azureSpeechTestResult = "";
+        StateHasChanged();
+
+        try
+        {
+            var result = await SettingsService.ValidateAzureSpeechSettingsAsync(settings.AzureSpeech.AzureSpeechApiKey, settings.AzureSpeech.AzureSpeechRegion);
+            azureSpeechTestSuccess = result.IsValid;
+            azureSpeechTestResult = result.IsValid ? "Connection successful!" : result.ErrorMessage ?? "Connection failed";
+        }
+        catch (Exception ex)
+        {
+            azureSpeechTestResult = $"Test failed: {ex.Message}";
+            azureSpeechTestSuccess = false;
+        }
+        finally
+        {
+            testingAzureSpeech = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task TestOpenAi()
+    {
+        if (settings == null || string.IsNullOrWhiteSpace(settings.OpenAi.ApiKey))
+        {
+            openAiTestResult = "Please enter API key";
+            openAiTestSuccess = false;
+            return;
+        }
+
+        testingOpenAi = true;
+        openAiTestResult = "";
+        StateHasChanged();
+
+        try
+        {
+            if (!string.IsNullOrEmpty(settings.OpenAi?.ApiKey) && !string.IsNullOrEmpty(settings.OpenAi?.Model))
+            {
+                var result = await SettingsService.ValidateOpenAiSettingsAsync(settings.OpenAi.ApiKey, settings.OpenAi.Model);
+                openAiTestSuccess = result.IsValid;
+                openAiTestResult = result.IsValid ? "Connection successful!" : result.ErrorMessage ?? "Connection failed";
+            }
+            else
+            {
+                openAiTestResult = "Please enter both API key and model.";
+                openAiTestSuccess = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            openAiTestResult = $"Test failed: {ex.Message}";
+            openAiTestSuccess = false;
+        }
+        finally
+        {
+            testingOpenAi = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task GetOpenAiModels()
+    {
+        if (settings == null || string.IsNullOrWhiteSpace(settings.OpenAi.ApiKey))
+        {
+            openAiModelsError = "Please enter an API key first";
+            return;
+        }
+
+        fetchingOpenAiModels = true;
+        openAiModelsError = string.Empty;
+        StateHasChanged();
+
+        try
+        {
+            var result = await SettingsService.GetOpenAiModelsAsync(settings.OpenAi.ApiKey);
+            
+            if (result.Success)
+            {
+                openAiModels = result.Models;
+                openAiModelsError = string.Empty;
+                
+                // If current model is not in the list and list is not empty, keep the current value
+                // This allows manual entry to still work
+            }
+            else
+            {
+                openAiModelsError = result.ErrorMessage ?? "Failed to fetch models";
+            }
+        }
+        catch (Exception ex)
+        {
+            openAiModelsError = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            fetchingOpenAiModels = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task TestAnthropic()
+    {
+        if (settings == null || string.IsNullOrWhiteSpace(settings.Anthropic.ApiKey))
+        {
+            anthropicTestResult = "Please enter API key";
+            anthropicTestSuccess = false;
+            return;
+        }
+
+        testingAnthropic = true;
+        anthropicTestResult = "";
+        StateHasChanged();
+
+        try
+        {
+            var result = await SettingsService.ValidateAnthropicSettingsAsync(settings.Anthropic.ApiKey);
+            anthropicTestSuccess = result.IsValid;
+            anthropicTestResult = result.IsValid ? "Connection successful!" : result.ErrorMessage ?? "Connection failed";
+        }
+        catch (Exception ex)
+        {
+            anthropicTestResult = $"Test failed: {ex.Message}";
+            anthropicTestSuccess = false;
+        }
+        finally
+        {
+            testingAnthropic = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task GetAnthropicModels()
+    {
+        if (settings == null || string.IsNullOrWhiteSpace(settings.Anthropic.ApiKey))
+        {
+            anthropicModelsError = "Please enter an API key first";
+            return;
+        }
+
+        fetchingAnthropicModels = true;
+        anthropicModelsError = string.Empty;
+        StateHasChanged();
+
+        try
+        {
+            var result = await SettingsService.GetAnthropicModelsAsync(settings.Anthropic.ApiKey);
+            
+            if (result.Success)
+            {
+                anthropicModels = result.Models;
+                anthropicModelsError = string.Empty;
+            }
+            else
+            {
+                anthropicModelsError = result.ErrorMessage ?? "Failed to fetch models";
+            }
+        }
+        catch (Exception ex)
+        {
+            anthropicModelsError = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            fetchingAnthropicModels = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task TestAzureOpenAi()
+    {
+        if (settings == null || string.IsNullOrWhiteSpace(settings.AzureOpenAi.ApiKey) || string.IsNullOrWhiteSpace(settings.AzureOpenAi.Endpoint) || string.IsNullOrWhiteSpace(settings.AzureOpenAi.DeploymentName))
+        {
+            azureOpenAiTestResult = "Please enter API key, endpoint, and deployment name";
+            azureOpenAiTestSuccess = false;
+            return;
+        }
+
+        testingAzureOpenAi = true;
+        azureOpenAiTestResult = "";
+        StateHasChanged();
+
+        try
+        {
+            var result = await SettingsService.ValidateAzureOpenAiSettingsAsync(settings.AzureOpenAi.ApiKey, settings.AzureOpenAi.Endpoint, settings.AzureOpenAi.DeploymentName);
+            azureOpenAiTestSuccess = result.IsValid;
+            azureOpenAiTestResult = result.IsValid ? "Connection successful!" : result.ErrorMessage ?? "Connection failed";
+        }
+        catch (Exception ex)
+        {
+            azureOpenAiTestResult = $"Test failed: {ex.Message}";
+            azureOpenAiTestSuccess = false;
+        }
+        finally
+        {
+            testingAzureOpenAi = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task TestGoogleGemini()
+    {
+        if (settings == null || string.IsNullOrWhiteSpace(settings.GoogleGemini.ApiKey))
+        {
+            googleGeminiTestResult = "Please enter API key";
+            googleGeminiTestSuccess = false;
+            return;
+        }
+
+        testingGoogleGemini = true;
+        googleGeminiTestResult = "";
+        StateHasChanged();
+
+        try
+        {
+            var apiKey = settings.GoogleGemini?.ApiKey ?? string.Empty;
+            var model = settings.GoogleGemini?.Model ?? string.Empty;
+            var result = await SettingsService.ValidateGoogleSettingsAsync(apiKey, model);
+            googleGeminiTestSuccess = result.IsValid;
+            googleGeminiTestResult = result.IsValid ? "Connection successful!" : result.ErrorMessage ?? "Connection failed";
+        }
+        catch (Exception ex)
+        {
+            googleGeminiTestResult = $"Test failed: {ex.Message}";
+            googleGeminiTestSuccess = false;
+        }
+        finally
+        {
+            testingGoogleGemini = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task GetGoogleGeminiModels()
+    {
+        if (settings == null || string.IsNullOrWhiteSpace(settings.GoogleGemini.ApiKey))
+        {
+            googleGeminiModelsError = "Please enter an API key first";
+            return;
+        }
+
+        fetchingGoogleGeminiModels = true;
+        googleGeminiModelsError = string.Empty;
+        StateHasChanged();
+
+        try
+        {
+            var result = await SettingsService.GetGoogleGeminiModelsAsync(settings.GoogleGemini.ApiKey);
+            
+            if (result.Success)
+            {
+                googleGeminiModels = result.Models;
+                googleGeminiModelsError = string.Empty;
+            }
+            else
+            {
+                googleGeminiModelsError = result.ErrorMessage ?? "Failed to fetch models";
+            }
+        }
+        catch (Exception ex)
+        {
+            googleGeminiModelsError = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            fetchingGoogleGeminiModels = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task DeleteAllSegments()
+    {
+        var confirmed = await JSRuntime.InvokeAsync<bool>("confirm", "Are you sure you want to delete ALL segments from ALL projects? This action cannot be undone.");
+        
+        if (!confirmed) return;
+
+        deletingSegments = true;
+        deleteSegmentsResult = string.Empty;
+        StateHasChanged();
+
+        try
+        {
+            var count = await SegmentService.DeleteAllSegmentsAsync();
+            deleteSegmentsSuccess = true;
+            deleteSegmentsResult = $"Successfully deleted {count} segment(s).";
+        }
+        catch (Exception ex)
+        {
+            deleteSegmentsSuccess = false;
+            deleteSegmentsResult = $"Error deleting segments: {ex.Message}";
+        }
+        finally
+        {
+            deletingSegments = false;
+            StateHasChanged();
+        }
+    }
+}

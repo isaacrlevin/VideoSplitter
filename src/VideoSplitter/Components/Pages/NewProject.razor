@@ -1,0 +1,327 @@
+@page "/new-project"
+@using VideoSplitter.Services
+@using VideoSplitter.Models
+@inject IProjectService ProjectService
+@inject IVideoService VideoService
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
+
+<PageTitle>New Project - VideoSplitter</PageTitle>
+
+<div class="row">
+    <div class="col-lg-8 mx-auto">
+        <div class="card">
+            <div class="card-header">
+                <h3>Create New Project</h3>
+            </div>
+            <div class="card-body">
+                <EditForm Model="@newProject" OnSubmit="@CreateProject">
+                    <DataAnnotationsValidator />
+                    
+                    <div class="mb-3">
+                        <label for="projectName" class="form-label">Project Name *</label>
+                        <InputText @bind-Value="newProject.Name" class="form-control" id="projectName" placeholder="e.g., Tech Talk Episode 15" />
+                        <ValidationMessage For="@(() => newProject.Name)" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="projectDescription" class="form-label">Description</label>
+                        <InputTextArea @bind-Value="newProject.Description" class="form-control" id="projectDescription" rows="3" placeholder="Brief description of the episode or content..." />
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="form-label">Video Source</label>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="videoSource" id="fileUpload" @onchange="() => { isYouTubeSource = false; ClearErrors(); }" checked="@(!isYouTubeSource)">
+                            <label class="form-check-label" for="fileUpload">
+                                Upload Video File
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="videoSource" id="youtubeUrl" @onchange="() => { isYouTubeSource = true; ClearErrors(); }" checked="@isYouTubeSource">
+                            <label class="form-check-label" for="youtubeUrl">
+                                YouTube URL
+                            </label>
+                        </div>
+                    </div>
+
+                    @if (isYouTubeSource)
+                    {
+                        <div class="mb-3">
+                            <label for="youtubeInput" class="form-label">YouTube URL *</label>
+                            <InputText @bind-Value="youTubeUrl" class="form-control" id="youtubeInput" placeholder="https://www.youtube.com/watch?v=..." />
+                            @if (!string.IsNullOrEmpty(youTubeError))
+                            {
+                                <div class="text-danger small mt-1">
+                                    @if (youTubeError.Contains("cipher") || youTubeError.Contains("protection"))
+                                    {
+                                        <div class="alert alert-warning small p-2 mt-2">
+                                            <strong>Download Issue:</strong><br />
+                                            @youTubeError
+                                            <hr class="my-2" />
+                                            <strong>Suggestions:</strong>
+                                            <ul class="mb-0 small">
+                                                <li>Try again in a few minutes</li>
+                                                <li>Use a different video</li>
+                                                <li>Upload the video file directly instead</li>
+                                            </ul>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        @youTubeError
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="mb-3">
+                            <label for="videoFile" class="form-label">Video File *</label>
+                            <InputFile OnChange="@OnFileSelected" class="form-control" id="videoFile" accept=".mp4,.avi,.mov,.mkv,.wmv,.webm,.m4v" />
+                            @if (!string.IsNullOrEmpty(fileError))
+                            {
+                                <div class="text-danger small mt-1">@fileError</div>
+                            }
+                            @if (selectedFile != null)
+                            {
+                                <div class="small text-success mt-1">
+                                    Selected: @selectedFile.Name (@FormatFileSize(selectedFile.Size))
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    @if (isProcessing)
+                    {
+                        <div class="text-center py-4">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Processing...</span>
+                            </div>
+                            <p class="mt-2">@processingMessage</p>
+                            @if (downloadProgress > 0)
+                            {
+                                <div class="progress mt-2">
+                                    <div class="progress-bar" role="progressbar" style="width: @(downloadProgress)%" aria-valuenow="@downloadProgress" aria-valuemin="0" aria-valuemax="100">
+                                        @downloadProgress.ToString("F0")%
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="d-flex justify-content-between">
+                            <a href="/projects" class="btn btn-secondary">Cancel</a>
+                            <button type="submit" class="btn btn-primary" disabled="@(!CanSubmit())">
+                                <span class="oi oi-plus"></span> Create Project
+                            </button>
+                        </div>
+                    }
+                </EditForm>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private Project newProject = new Project();
+    private bool isYouTubeSource = false;
+    private string youTubeUrl = string.Empty;
+    private IBrowserFile? selectedFile;
+    private string youTubeError = string.Empty;
+    private string fileError = string.Empty;
+    private bool isProcessing = false;
+    private string processingMessage = string.Empty;
+    private double downloadProgress = 0;
+
+    private async Task CreateProject(EditContext editContext)
+    {
+        // Validate basic form requirements first
+        if (!CanSubmit()) return;
+
+        // Validate the name field specifically since it's required
+        if (string.IsNullOrWhiteSpace(newProject.Name))
+        {
+            return;
+        }
+
+        isProcessing = true;
+        processingMessage = "Creating project...";
+        // Clear any previous errors
+        ClearErrors();
+        StateHasChanged();
+
+        try
+        {
+            string videoPath;
+
+            if (isYouTubeSource)
+            {
+                processingMessage = "Downloading video from YouTube...";
+                StateHasChanged();
+
+                var tempFolder = Path.Combine(Path.GetTempPath(), "VideoSplitter", Guid.NewGuid().ToString());
+                Directory.CreateDirectory(tempFolder);
+
+                var progress = new Progress<double>(value =>
+                {
+                    downloadProgress = value * 100;
+                    InvokeAsync(StateHasChanged);
+                });
+
+                var result = await VideoService.DownloadYouTubeVideoAsync(youTubeUrl, tempFolder, progress);
+                
+                if (!result.Success || string.IsNullOrEmpty(result.FilePath))
+                {
+                    youTubeError = result.Error ?? "Failed to download video";
+                    return;
+                }
+
+                videoPath = result.FilePath;
+                newProject.YouTubeUrl = youTubeUrl;
+            }
+            else
+            {
+                processingMessage = "Saving video file...";
+                StateHasChanged();
+
+                // Create project folder
+                var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                var projectsFolder = Path.Combine(appDataPath, "VideoSplitter", "Projects");
+                var tempProjectFolder = Path.Combine(projectsFolder, Guid.NewGuid().ToString());
+                Directory.CreateDirectory(tempProjectFolder);
+
+                videoPath = Path.Combine(tempProjectFolder, selectedFile!.Name);
+
+                using var fileStream = File.Create(videoPath);
+                using var stream = selectedFile.OpenReadStream(maxAllowedSize: 5_000_000_000); // 5GB max
+                await stream.CopyToAsync(fileStream);
+            }
+
+            // Validate video file
+            processingMessage = "Validating video file...";
+            StateHasChanged();
+
+            if (!await VideoService.IsValidVideoFileAsync(videoPath))
+            {
+                if (isYouTubeSource) youTubeError = "Downloaded file is not a valid video";
+                else fileError = "Selected file is not a valid video";
+                return;
+            }
+
+            // Get video information
+            processingMessage = "Analyzing video...";
+            StateHasChanged();
+
+            newProject.VideoPath = videoPath;
+            newProject.Duration = await VideoService.GetVideoDurationAsync(videoPath);
+            newProject.FileSizeBytes = await VideoService.GetFileSizeAsync(videoPath);
+
+            // Create project
+            var createdProject = await ProjectService.CreateProjectAsync(newProject);
+
+            // Generate thumbnail
+            if (newProject.Duration.HasValue)
+            {
+                var projectFolder = await ProjectService.CreateProjectFolderAsync(createdProject.Id);
+                var thumbnailPosition = TimeSpan.FromSeconds(newProject.Duration.Value.TotalSeconds / 2);
+                var thumbnailPath = await VideoService.GenerateThumbnailAsync(videoPath, projectFolder, thumbnailPosition);
+                
+                if (!string.IsNullOrEmpty(thumbnailPath))
+                {
+                    createdProject.ThumbnailPath = thumbnailPath;
+                    await ProjectService.UpdateProjectAsync(createdProject);
+                }
+            }
+
+            // Navigate to project page
+            Navigation.NavigateTo($"/project/{createdProject.Id}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error creating project: {ex.Message}");
+            
+            // Provide more specific error messages
+            string errorMessage = "Failed to create project. Please try again.";
+            if (ex.Message.Contains("cipher") || ex.Message.Contains("decrypt"))
+            {
+                errorMessage = "YouTube download failed due to protection measures. Please try again later or use a different video.";
+                youTubeError = errorMessage;
+            }
+            else if (isYouTubeSource)
+            {
+                youTubeError = ex.Message.Contains("YouTube") ? ex.Message : $"YouTube download error: {ex.Message}";
+            }
+            else
+            {
+                fileError = ex.Message.Contains("file") ? ex.Message : $"File processing error: {ex.Message}";
+            }
+            
+            await JSRuntime.InvokeVoidAsync("alert", errorMessage);
+        }
+        finally
+        {
+            isProcessing = false;
+            downloadProgress = 0;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OnFileSelected(InputFileChangeEventArgs e)
+    {
+        selectedFile = e.File;
+        fileError = string.Empty;
+
+        if (selectedFile.Size > 5_000_000_000) // 5GB
+        {
+            fileError = "File size must be less than 5GB";
+            selectedFile = null;
+            return;
+        }
+
+        // Basic file extension validation
+        var allowedExtensions = new[] { ".mp4", ".avi", ".mov", ".mkv", ".wmv", ".webm", ".m4v" };
+        var extension = Path.GetExtension(selectedFile.Name).ToLowerInvariant();
+        
+        if (!allowedExtensions.Contains(extension))
+        {
+            fileError = "Please select a valid video file";
+            selectedFile = null;
+        }
+    }
+
+    private bool CanSubmit()
+    {
+        if (string.IsNullOrWhiteSpace(newProject.Name)) return false;
+        
+        if (isYouTubeSource)
+        {
+            return !string.IsNullOrWhiteSpace(youTubeUrl) && string.IsNullOrEmpty(youTubeError);
+        }
+        else
+        {
+            return selectedFile != null && string.IsNullOrEmpty(fileError);
+        }
+    }
+
+    private string FormatFileSize(long bytes)
+    {
+        string[] sizes = { "B", "KB", "MB", "GB" };
+        double len = bytes;
+        int order = 0;
+        while (len >= 1024 && order < sizes.Length - 1)
+        {
+            order++;
+            len = len / 1024;
+        }
+        return $"{len:0.##} {sizes[order]}";
+    }
+
+    private void ClearErrors()
+    {
+        youTubeError = string.Empty;
+        fileError = string.Empty;
+    }
+}

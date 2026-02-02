@@ -1,0 +1,486 @@
+﻿@page "/"
+@using VideoSplitter.Services
+@using VideoSplitter.Models
+@inject IProjectService ProjectService
+
+<PageTitle>Home - VideoSplitter</PageTitle>
+
+<div class="home-header">
+    <div class="welcome-section">
+        <h1 class="gradient-text">Welcome to VideoSplitter</h1>
+        <p class="subtitle">Transform your podcasts into engaging short clips for social media</p>
+    </div>
+    <a href="/new-project" class="btn btn-primary btn-lg">
+        <span class="oi oi-plus"></span> Create New Project
+    </a>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-8">
+        <div class="card feature-card">
+            <div class="card-header">
+                <div class="d-flex align-items-center gap-2">
+                    <span class="oi oi-info header-icon"></span>
+                    <h4 class="mb-0">About VideoSplitter</h4>
+                </div>
+            </div>
+            <div class="card-body">
+                <p class="lead">
+                    VideoSplitter helps you create engaging short clips from your podcast episodes for social media platforms like TikTok and Instagram Reels.
+                </p>
+                
+                <div class="features-grid">
+                    <div class="feature-item">
+                        <div class="feature-icon video">
+                            <span class="oi oi-video"></span>
+                        </div>
+                        <div class="feature-content">
+                            <h5>Video Input</h5>
+                            <p>Upload video files or provide YouTube URLs</p>
+                        </div>
+                    </div>
+                    
+                    <div class="feature-item">
+                        <div class="feature-icon transcription">
+                            <span class="oi oi-microphone"></span>
+                        </div>
+                        <div class="feature-content">
+                            <h5>AI Transcription</h5>
+                            <p>Generate transcripts locally or using Azure AI Speech</p>
+                        </div>
+                    </div>
+                    
+                    <div class="feature-item">
+                        <div class="feature-icon segmentation">
+                            <span class="oi oi-grid-three-up"></span>
+                        </div>
+                        <div class="feature-content">
+                            <h5>Smart Segmentation</h5>
+                            <p>Use AI to identify interesting segments automatically</p>
+                        </div>
+                    </div>
+                    
+                    <div class="feature-item">
+                        <div class="feature-icon preview">
+                            <span class="oi oi-eye"></span>
+                        </div>
+                        <div class="feature-content">
+                            <h5>Video Preview</h5>
+                            <p>Review segments before extracting clips</p>
+                        </div>
+                    </div>
+                    
+                    <div class="feature-item">
+                        <div class="feature-icon extraction">
+                            <span class="oi oi-scissors"></span>
+                        </div>
+                        <div class="feature-content">
+                            <h5>Clip Extraction</h5>
+                            <p>Generate ready-to-share video clips</p>
+                        </div>
+                    </div>
+                    
+                    <div class="feature-item">
+                        <div class="feature-icon management">
+                            <span class="oi oi-folder"></span>
+                        </div>
+                        <div class="feature-content">
+                            <h5>Project Management</h5>
+                            <p>Resume work on projects anytime</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-4">
+        <div class="card stats-card">
+            <div class="card-header">
+                <div class="d-flex align-items-center gap-2">
+                    <span class="oi oi-bar-chart header-icon"></span>
+                    <h4 class="mb-0">Quick Stats</h4>
+                </div>
+            </div>
+            <div class="card-body">
+                @if (stats.HasValue)
+                {
+                    <div class="stats-grid">
+                        <div class="stat-item primary">
+                            <div class="stat-icon">
+                                <span class="oi oi-project"></span>
+                            </div>
+                            <div class="stat-details">
+                                <h3>@stats.Value.TotalProjects</h3>
+                                <p>Total Projects</p>
+                            </div>
+                        </div>
+                        <div class="stat-item success">
+                            <div class="stat-icon">
+                                <span class="oi oi-check"></span>
+                            </div>
+                            <div class="stat-details">
+                                <h3>@stats.Value.CompletedProjects</h3>
+                                <p>Completed</p>
+                            </div>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <div class="text-center py-4">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+        
+        <div class="card recent-projects-card mt-4">
+            <div class="card-header">
+                <div class="d-flex align-items-center justify-content-between">
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="oi oi-clock header-icon"></span>
+                        <h4 class="mb-0">Recent Projects</h4>
+                    </div>
+                    @if (recentProjects != null && recentProjects.Any())
+                    {
+                        <a href="/projects" class="view-all-link">View All</a>
+                    }
+                </div>
+            </div>
+            <div class="card-body">
+                @if (recentProjects == null)
+                {
+                    <div class="text-center py-4">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                    </div>
+                }
+                else if (!recentProjects.Any())
+                {
+                    <div class="empty-state">
+                        <div class="empty-icon">
+                            <span class="oi oi-video"></span>
+                        </div>
+                        <p class="text-muted mb-2">No projects yet</p>
+                        <a href="/new-project" class="btn btn-sm btn-outline-primary">Create your first project</a>
+                    </div>
+                }
+                else
+                {
+                    <div class="recent-projects-list">
+                        @foreach (var project in recentProjects.Take(5))
+                        {
+                            <a href="/project/@project.Id" class="recent-project-item">
+                                <div class="project-info">
+                                    <h6>@project.Name</h6>
+                                    <small class="text-muted">
+                                        <span class="oi oi-calendar"></span>
+                                        @project.UpdatedAt.ToString("MMM dd, yyyy")
+                                    </small>
+                                </div>
+                                <span class="badge @GetStatusBadgeClass(project.Status)">
+                                    @project.Status.ToString().Replace("Status", "")
+                                </span>
+                            </a>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .home-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 2rem;
+        padding-bottom: 2rem;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .welcome-section h1 {
+        margin-bottom: 0.5rem;
+    }
+
+    .gradient-text {
+        background: linear-gradient(135deg, #4A7FE8 0%, #667EEA 50%, #7C3AED 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        font-size: 2.25rem;
+        font-weight: 700;
+    }
+
+    .subtitle {
+        color: var(--text-secondary);
+        font-size: 1.125rem;
+        margin: 0;
+    }
+
+    .feature-card,
+    .stats-card,
+    .recent-projects-card {
+        border: none;
+        box-shadow: var(--shadow);
+    }
+
+    .header-icon {
+        color: var(--primary-color);
+        font-size: 1.125rem;
+    }
+
+    .lead {
+        color: var(--text-secondary);
+        margin-bottom: 2rem;
+    }
+
+    .features-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1.5rem;
+    }
+
+    .feature-item {
+        display: flex;
+        gap: 1rem;
+    }
+
+    .feature-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.25rem;
+        flex-shrink: 0;
+    }
+
+    .feature-icon.video {
+        background: linear-gradient(135deg, #EFF6FF 0%, #DBEAFE 100%);
+        color: #1E40AF;
+    }
+
+    .feature-icon.transcription {
+        background: linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%);
+        color: #92400E;
+    }
+
+    .feature-icon.segmentation {
+        background: linear-gradient(135deg, #F3E8FF 0%, #E9D5FF 100%);
+        color: #6B21A8;
+    }
+
+    .feature-icon.preview {
+        background: linear-gradient(135deg, #D1FAE5 0%, #A7F3D0 100%);
+        color: #065F46;
+    }
+
+    .feature-icon.extraction {
+        background: linear-gradient(135deg, #FEE2E2 0%, #FECACA 100%);
+        color: #991B1B;
+    }
+
+    .feature-icon.management {
+        background: linear-gradient(135deg, #E0E7FF 0%, #C7D2FE 100%);
+        color: #3730A3;
+    }
+
+    .feature-content h5 {
+        font-size: 0.9375rem;
+        font-weight: 600;
+        margin-bottom: 0.25rem;
+        color: var(--text-primary);
+    }
+
+    .feature-content p {
+        font-size: 0.8125rem;
+        color: var(--text-secondary);
+        margin: 0;
+    }
+
+    .stats-grid {
+        display: grid;
+        gap: 1rem;
+    }
+
+    .stat-item {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 1.25rem;
+        border-radius: var(--border-radius-sm);
+        background: var(--bg-secondary);
+    }
+
+    .stat-item.primary {
+        background: linear-gradient(135deg, #EFF6FF 0%, #DBEAFE 100%);
+    }
+
+    .stat-item.success {
+        background: linear-gradient(135deg, #D1FAE5 0%, #A7F3D0 100%);
+    }
+
+    .stat-icon {
+        width: 56px;
+        height: 56px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.5rem;
+        background: white;
+        box-shadow: var(--shadow-sm);
+    }
+
+    .stat-item.primary .stat-icon {
+        color: #1E40AF;
+    }
+
+    .stat-item.success .stat-icon {
+        color: #065F46;
+    }
+
+    .stat-details h3 {
+        font-size: 2rem;
+        font-weight: 700;
+        margin: 0;
+        color: var(--text-primary);
+    }
+
+    .stat-details p {
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+        margin: 0;
+    }
+
+    .view-all-link {
+        font-size: 0.875rem;
+        color: var(--primary-color);
+        font-weight: 500;
+        text-decoration: none;
+    }
+
+    .view-all-link:hover {
+        text-decoration: underline;
+    }
+
+    .recent-projects-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .recent-project-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 1rem;
+        border-radius: var(--border-radius-sm);
+        background: var(--bg-secondary);
+        text-decoration: none;
+        transition: all var(--transition-fast);
+        border: 1px solid transparent;
+    }
+
+    .recent-project-item:hover {
+        background: var(--bg-primary);
+        border-color: var(--border-color);
+        transform: translateX(4px);
+    }
+
+    .project-info h6 {
+        font-size: 0.9375rem;
+        font-weight: 600;
+        margin-bottom: 0.25rem;
+        color: var(--text-primary);
+    }
+
+    .project-info small {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 2rem 1rem;
+    }
+
+    .empty-icon {
+        width: 64px;
+        height: 64px;
+        margin: 0 auto 1rem;
+        background: var(--bg-secondary);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.75rem;
+        color: var(--text-muted);
+    }
+
+    @@media (max-width: 768px) {
+        .home-header {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 1rem;
+        }
+
+        .gradient-text {
+            font-size: 1.75rem;
+        }
+
+        .features-grid {
+            grid-template-columns: 1fr;
+            gap: 1rem;
+        }
+    }
+</style>
+
+@code {
+    private IEnumerable<Project>? recentProjects;
+    private (int TotalProjects, int CompletedProjects)? stats;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var allProjects = await ProjectService.GetAllProjectsAsync();
+            recentProjects = allProjects.OrderByDescending(p => p.UpdatedAt);
+            
+            stats = (
+                TotalProjects: allProjects.Count(),
+                CompletedProjects: allProjects.Count(p => p.Status == ProjectStatus.Completed)
+            );
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading projects: {ex.Message}");
+            recentProjects = new List<Project>();
+            stats = (0, 0);
+        }
+    }
+
+    private string GetStatusBadgeClass(ProjectStatus status)
+    {
+        return status switch
+        {
+            ProjectStatus.VideoUploaded => "bg-info",
+            ProjectStatus.TranscriptGenerating => "bg-warning",
+            ProjectStatus.TranscriptGenerated => "bg-primary",
+            ProjectStatus.SegmentsGenerating => "bg-warning",
+            ProjectStatus.SegmentsGenerated => "bg-success",
+            ProjectStatus.Completed => "bg-success",
+            _ => "bg-secondary"
+        };
+    }
+}

@@ -1,0 +1,2700 @@
+@page "/project/{Id:int}"
+@using VideoSplitter.Services
+@using VideoSplitter.Services.SocialMediaPublishers
+@using VideoSplitter.Models
+@using Microsoft.JSInterop
+@inject IProjectService ProjectService
+@inject ISegmentService SegmentService
+@inject IFileStreamService FileStreamService
+@inject ISettingsService SettingsService
+@inject ITranscriptService TranscriptService
+@inject IAiService AiService
+@inject IVideoExtractionService VideoExtractionService
+@inject IPlatformFileService PlatformFileService
+@inject ISocialMediaPublisherService SocialMediaPublisherService
+@inject IJSRuntime JSRuntime
+@inject NavigationManager Navigation
+@implements IAsyncDisposable
+
+<PageTitle>@(project?.Name ?? "Loading...") - VideoSplitter</PageTitle>
+
+@if (project == null)
+{
+    <div class="text-center">
+        <div class="spinner-border" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+        <p class="mt-2">Loading project...</p>
+    </div>
+}
+else
+{
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb mb-2">
+                    <li class="breadcrumb-item"><a href="/projects">Projects</a></li>
+                    <li class="breadcrumb-item active" aria-current="page">@project.Name</li>
+                </ol>
+            </nav>
+            <h1>@project.Name</h1>
+        </div>
+        <div>
+            <button class="btn btn-outline-secondary me-2" @onclick="RefreshData">
+                <span class="oi oi-reload"></span> Refresh
+            </button>
+            <button class="btn btn-outline-danger" @onclick="() => ConfirmDelete(project)">
+                <span class="oi oi-trash"></span> Delete Project
+            </button>
+        </div>
+    </div>
+
+    <!-- Generation Progress Modal -->
+    @if (isGeneratingSegments)
+    {
+        <div class="modal show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Generating Segments</h5>
+                    </div>
+                    <div class="modal-body">
+                        <div class="progress mb-3">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                 role="progressbar" style="width: @(generationProgressPercent)%"></div>
+                        </div>
+                        <p class="mb-0">@generationStatus</p>
+                        <small class="text-muted">This may take a few minutes depending on video length and AI provider...</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    <!-- Custom Confirmation Modal -->
+    @if (showConfirmModal)
+    {
+        <div class="modal show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">
+                            <span class="oi oi-warning text-warning me-2"></span>
+                            Confirm Action
+                        </h5>
+                        <button type="button" class="btn-close" @onclick="CancelConfirm" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        @((MarkupString)confirmMessage.Replace("\n", "<br/>"))
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" @onclick="CancelConfirm">Cancel</button>
+                        <button type="button" class="btn btn-primary" @onclick="ConfirmAction">OK</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    <!-- Social Media Post Modal -->
+    @if (showPostModal && selectedSegmentForPost != null)
+    {
+        <div class="modal show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">
+                            <span class="oi oi-share-boxed me-2"></span>
+                            Post to @selectedPlatformName
+                        </h5>
+                        <button type="button" class="btn-close" @onclick="ClosePostDialog" aria-label="Close" disabled="@isPublishing"></button>
+                    </div>
+                    <div class="modal-body">
+                        @if (!publisherAuthStatus.TryGetValue(selectedPlatformName, out var isAuth) || !isAuth)
+                        {
+                            <div class="alert alert-warning">
+                                <span class="oi oi-warning me-2"></span>
+                                <strong>Not connected to @selectedPlatformName</strong>
+                                <p class="mb-2 mt-2">You need to connect your @selectedPlatformName account to post videos.</p>
+                                <button class="btn btn-primary btn-sm" @onclick="ConnectToPlatform" disabled="@isConnecting">
+                                    @if (isConnecting)
+                                    {
+                                        <span class="spinner-border spinner-border-sm" role="status"></span>
+                                    }
+                                    else
+                                    {
+                                        <span class="oi oi-link-intact"></span>
+                                    }
+                                    Connect @selectedPlatformName
+                                </button>
+                            </div>
+                        }
+                        else
+                        {
+                            @if (videoValidationResult != null && !videoValidationResult.IsValid)
+                            {
+                                <div class="alert alert-danger">
+                                    <strong>Video not compatible with @selectedPlatformName:</strong>
+                                    <ul class="mb-0 mt-2">
+                                        @foreach (var error in videoValidationResult.Errors)
+                                        {
+                                            <li>@error</li>
+                                        }
+                                    </ul>
+                                </div>
+                            }
+                            else
+                            {
+                                @if (videoValidationResult?.Warnings.Count > 0)
+                                {
+                                    <div class="alert alert-warning">
+                                        <strong>Warnings:</strong>
+                                        <ul class="mb-0 mt-2">
+                                            @foreach (var warning in videoValidationResult.Warnings)
+                                            {
+                                                <li>@warning</li>
+                                            }
+                                        </ul>
+                                    </div>
+                                }
+
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">Title *</label>
+                                    <input type="text" class="form-control" @bind="postTitle" maxlength="150" placeholder="Enter a catchy title..." />
+                                    <small class="text-muted">@postTitle.Length / 150 characters</small>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">Description</label>
+                                    <textarea class="form-control" @bind="postDescription" rows="3" maxlength="2200" placeholder="Add a description..."></textarea>
+                                    <small class="text-muted">@(postDescription?.Length ?? 0) / 2200 characters</small>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">Hashtags</label>
+                                    <input type="text" class="form-control" @bind="postHashtags" placeholder="viral, shorts, trending (comma separated)" />
+                                    <small class="text-muted">Enter hashtags separated by commas (without # symbol)</small>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">Privacy</label>
+                                    <select class="form-select" @bind="postPrivacy">
+                                        <option value="@PrivacyLevel.Public">Public</option>
+                                        <option value="@PrivacyLevel.Private">Private</option>
+                                        @if (selectedPlatformName == "YouTube Shorts")
+                                        {
+                                            <option value="@PrivacyLevel.Unlisted">Unlisted</option>
+                                        }
+                                        @if (selectedPlatformName == "TikTok")
+                                        {
+                                            <option value="@PrivacyLevel.FriendsOnly">Friends Only</option>
+                                        }
+                                    </select>
+                                </div>
+
+                                @if (selectedPlatformName == "TikTok")
+                                {
+                                    <div class="mb-3">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" @bind="allowComments" id="allowComments">
+                                            <label class="form-check-label" for="allowComments">Allow comments</label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" @bind="allowDuet" id="allowDuet">
+                                            <label class="form-check-label" for="allowDuet">Allow duet</label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" @bind="allowStitch" id="allowStitch">
+                                            <label class="form-check-label" for="allowStitch">Allow stitch</label>
+                                        </div>
+                                    </div>
+                                }
+
+                                @if (isPublishing)
+                                {
+                                    <div class="mb-3">
+                                        <label class="form-label">Upload Progress</label>
+                                        <div class="progress">
+                                            <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                                 role="progressbar" style="width: @(publishProgress * 100)%">
+                                                @((publishProgress * 100).ToString("F0"))%
+                                            </div>
+                                        </div>
+                                        <small class="text-muted">@publishStatus</small>
+                                    </div>
+                                }
+
+                                @if (!string.IsNullOrEmpty(publishError))
+                                {
+                                    <div class="alert alert-danger">
+                                        <span class="oi oi-warning me-2"></span>@publishError
+                                    </div>
+                                }
+
+                                @if (!string.IsNullOrEmpty(publishSuccess))
+                                {
+                                    <div class="alert alert-success">
+                                        <span class="oi oi-check me-2"></span>@publishSuccess
+                                        @if (!string.IsNullOrEmpty(publishedUrl))
+                                        {
+                                            <br/>
+                                            <a href="@publishedUrl" target="_blank" class="alert-link">View your post <span class="oi oi-external-link"></span></a>
+                                        }
+                                    </div>
+                                }
+                            }
+                        }
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" @onclick="ClosePostDialog" disabled="@isPublishing">Cancel</button>
+                        @if (publisherAuthStatus.TryGetValue(selectedPlatformName, out var authStatus) && authStatus && (videoValidationResult?.IsValid ?? false))
+                        {
+                            <button type="button" class="btn btn-primary" @onclick="PublishToSelectedPlatform" disabled="@((isPublishing || string.IsNullOrWhiteSpace(postTitle)))">
+                                @if (isPublishing)
+                                {
+                                    <span class="spinner-border spinner-border-sm" role="status"></span>
+                                    <span> Publishing...</span>
+                                }
+                                else
+                                {
+                                    <span class="oi oi-cloud-upload"></span>
+                                    <span> Publish</span>
+                                }
+                            </button>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    <!-- Extraction Options Modal -->
+    @if (showSubtitleOptionsModal && segmentForExtraction != null)
+    {
+        <div class="modal show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">
+                            <span class="oi oi-cog me-2"></span>
+                            Extraction Options
+                        </h5>
+                        <button type="button" class="btn-close" @onclick="CancelExtractSegment" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="mb-4">
+                            <h6>Segment: @FormatDuration(segmentForExtraction.StartTime) - @FormatDuration(segmentForExtraction.EndTime)</h6>
+                            <p class="text-muted small">@segmentForExtraction.Summary</p>
+                        </div>
+
+                        <!-- Aspect Ratio Selection -->
+                        <div class="mb-4">
+                            <label class="form-label fw-bold">Aspect Ratio</label>
+                            <select class="form-select" @bind="selectedAspectRatioMode" @bind:after="OnAspectRatioChanged">
+                                <option value="@AspectRatioMode.Original">Original</option>
+                                <option value="@AspectRatioMode.VerticalCrop">Vertical (9:16) - Center Crop</option>
+                                <option value="@AspectRatioMode.VerticalBlurBackground">Vertical (9:16) - Blurred Background</option>
+                                <option value="@AspectRatioMode.VerticalStackSplitScreen">Vertical (9:16) - Stack Split Screen</option>
+                                <option value="@AspectRatioMode.VerticalStackPodcast">Vertical (9:16) - Podcast Layout</option>
+                                <option value="@AspectRatioMode.VerticalLetterbox">Vertical (9:16) - Letterbox</option>
+                            </select>
+                            @if (!string.IsNullOrEmpty(previewFrameBase64))
+                            {
+                                <small class="text-info">
+                                    <span class="oi oi-info"></span> Aspect ratio changed - click "Generate Preview" to update
+                                </small>
+                            }
+                        </div>
+
+                        <!-- Subtitle Options -->
+                        <div class="mb-3">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="enableSubtitles" @bind="subtitleOptions.Enabled">
+                                <label class="form-check-label fw-bold" for="enableSubtitles">Burn-in Subtitles</label>
+                            </div>
+                            @if (string.IsNullOrEmpty(project?.TranscriptPath))
+                            {
+                                <small class="text-warning">
+                                    <span class="oi oi-warning"></span> No transcript available. Generate a transcript first to enable subtitles.
+                                </small>
+                            }
+                        </div>
+
+                        @if (subtitleOptions.Enabled && !string.IsNullOrEmpty(project?.TranscriptPath))
+                        {
+                            <div class="card bg-light">
+                                <div class="card-body">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <!-- Font Settings -->
+                                            <div class="mb-3">
+                                                <label class="form-label">Font</label>
+                                                <select class="form-select form-select-sm" @bind="subtitleOptions.FontName">
+                                                    <option value="Arial">Arial</option>
+                                                    <option value="Helvetica">Helvetica</option>
+                                                    <option value="Verdana">Verdana</option>
+                                                    <option value="Impact">Impact</option>
+                                                    <option value="Georgia">Georgia</option>
+                                                    <option value="Times New Roman">Times New Roman</option>
+                                                    <option value="Courier New">Courier New</option>
+                                                </select>
+                                            </div>
+
+                                            <div class="mb-3">
+                                                <label class="form-label">Font Size: @subtitleOptions.FontSize</label>
+                                                <input type="range" class="form-range" min="5" max="48" step="2" 
+                                                       value="@subtitleOptions.FontSize" 
+                                                       @onchange="@(e => subtitleOptions.FontSize = int.Parse(e.Value?.ToString() ?? "24"))">
+                                            </div>
+
+                                            <div class="mb-3">
+                                                <label class="form-label">Position</label>
+                                                <select class="form-select form-select-sm" @bind="subtitleOptions.Position">
+                                                    <option value="@SubtitlePosition.Bottom">Bottom</option>
+                                                    <option value="@SubtitlePosition.Middle">Middle</option>
+                                                    <option value="@SubtitlePosition.Top">Top</option>
+                                                </select>
+                                            </div>
+
+                                            <div class="mb-3">
+                                                <label class="form-label">Vertical Margin: @subtitleOptions.MarginVertical px</label>
+                                                <input type="range" class="form-range" min="10" max="200" step="10" 
+                                                       value="@subtitleOptions.MarginVertical" 
+                                                       @onchange="@(e => subtitleOptions.MarginVertical = int.Parse(e.Value?.ToString() ?? "50"))">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <!-- Color Settings -->
+                                            <div class="mb-3">
+                                                <label class="form-label">Text Color</label>
+                                                <div class="input-group input-group-sm">
+                                                    <span class="input-group-text">#</span>
+                                                    <input type="text" class="form-control" @bind="subtitleOptions.PrimaryColor" maxlength="6" placeholder="FFFFFF">
+                                                    <input type="color" class="form-control form-control-color" value="@("#" + subtitleOptions.PrimaryColor)" 
+                                                           @onchange="@(e => subtitleOptions.PrimaryColor = e.Value?.ToString()?.TrimStart('#') ?? "FFFFFF")" style="max-width: 50px;">
+                                                </div>
+                                            </div>
+
+                                            <div class="mb-3">
+                                                <label class="form-label">Outline Color</label>
+                                                <div class="input-group input-group-sm">
+                                                    <span class="input-group-text">#</span>
+                                                    <input type="text" class="form-control" @bind="subtitleOptions.OutlineColor" maxlength="6" placeholder="000000">
+                                                    <input type="color" class="form-control form-control-color" value="@("#" + subtitleOptions.OutlineColor)" 
+                                                           @onchange="@(e => subtitleOptions.OutlineColor = e.Value?.ToString()?.TrimStart('#') ?? "000000")" style="max-width: 50px;">
+                                                </div>
+                                            </div>
+
+                                            <div class="mb-3">
+                                                <label class="form-label">Outline Width: @subtitleOptions.OutlineWidth</label>
+                                                <input type="range" class="form-range" min="0" max="4" 
+                                                       value="@subtitleOptions.OutlineWidth" 
+                                                       @onchange="@(e => subtitleOptions.OutlineWidth = int.Parse(e.Value?.ToString() ?? "2"))">
+                                            </div>
+
+                                            <div class="mb-3">
+                                                <label class="form-label">Shadow Depth: @subtitleOptions.ShadowDepth</label>
+                                                <input type="range" class="form-range" min="0" max="4" 
+                                                       value="@subtitleOptions.ShadowDepth" 
+                                                       @onchange="@(e => subtitleOptions.ShadowDepth = int.Parse(e.Value?.ToString() ?? "1"))">
+                                            </div>
+
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" id="allCaps" @bind="subtitleOptions.AllCaps">
+                                                <label class="form-check-label" for="allCaps">ALL CAPS</label>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Preview -->
+                                    <div class="mt-3">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <label class="form-label mb-0 fw-bold">Preview</label>
+                                            <button type="button" class="btn btn-sm btn-outline-primary" @onclick="GenerateSubtitlePreview" disabled="@isGeneratingPreview">
+                                                @if (isGeneratingPreview)
+                                                {
+                                                    <span class="spinner-border spinner-border-sm" role="status"></span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="oi oi-reload"></span>
+                                                }
+                                                Generate Preview
+                                            </button>
+                                        </div>
+                                        
+                                        @if (!string.IsNullOrEmpty(previewFrameBase64))
+                                        {
+                                            <div class="position-relative text-center" style="background-color: #000; border-radius: 8px; overflow: hidden;">
+                                                <img src="@previewFrameBase64" alt="Video preview" style="max-width: 100%; max-height: 300px; object-fit: contain;" />
+                                                <div class="position-absolute w-100" style="@GetSubtitlePreviewPosition()">
+                                                    <span style="
+                                                        font-family: @subtitleOptions.FontName;
+                                                        font-size: @(Math.Max(12, subtitleOptions.FontSize / 2))px;
+                                                        color: #@subtitleOptions.PrimaryColor;
+                                                        text-shadow: @(subtitleOptions.OutlineWidth)px @(subtitleOptions.OutlineWidth)px @(subtitleOptions.ShadowDepth)px #@subtitleOptions.OutlineColor,
+                                                                     -@(subtitleOptions.OutlineWidth)px -@(subtitleOptions.OutlineWidth)px @(subtitleOptions.ShadowDepth)px #@subtitleOptions.OutlineColor,
+                                                                     @(subtitleOptions.OutlineWidth)px -@(subtitleOptions.OutlineWidth)px @(subtitleOptions.ShadowDepth)px #@subtitleOptions.OutlineColor,
+                                                                     -@(subtitleOptions.OutlineWidth)px @(subtitleOptions.OutlineWidth)px @(subtitleOptions.ShadowDepth)px #@subtitleOptions.OutlineColor;
+                                                        @(subtitleOptions.AllCaps ? "text-transform: uppercase;" : "")
+                                                        padding: 4px 8px;
+                                                        background-color: rgba(0,0,0,0.3);
+                                                        border-radius: 4px;
+                                                    ">
+                                                        @GetPreviewSubtitleText()
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <div class="p-3 text-center" style="background-color: #333; border-radius: 8px;">
+                                                <span style="
+                                                    font-family: @subtitleOptions.FontName;
+                                                    font-size: @(subtitleOptions.FontSize)px;
+                                                    color: #@subtitleOptions.PrimaryColor;
+                                                    text-shadow: @(subtitleOptions.OutlineWidth)px @(subtitleOptions.OutlineWidth)px @(subtitleOptions.ShadowDepth)px #@subtitleOptions.OutlineColor;
+                                                    @(subtitleOptions.AllCaps ? "text-transform: uppercase;" : "")
+                                                ">
+                                                    Preview Subtitle Text
+                                                </span>
+                                                <p class="text-muted small mt-2 mb-0">Click "Generate Preview" to see subtitles on actual video frame</p>
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" @onclick="CancelExtractSegment">Cancel</button>
+                        <button type="button" class="btn btn-success" @onclick="ConfirmExtractSegment">
+                            <span class="oi oi-media-play me-1"></span> Extract
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    <!-- Custom Clip Extraction Options Modal -->
+    @if (showCustomClipOptionsModal)
+    {
+        var startTs = ParseTimeSpan(customClipStartTime);
+        var endTs = ParseTimeSpan(customClipEndTime);
+        
+        <div class="modal show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">
+                            <span class="oi oi-scissors me-2"></span>
+                            Custom Clip Options
+                        </h5>
+                        <button type="button" class="btn-close" @onclick="CancelCustomClipExtraction" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="mb-4">
+                            <h6>Clip: @customClipStartTime - @customClipEndTime</h6>
+                            @if (startTs.HasValue && endTs.HasValue)
+                            {
+                                <p class="text-muted small">Duration: @FormatDuration(endTs.Value - startTs.Value)</p>
+                            }
+                        </div>
+
+                        <!-- Aspect Ratio Selection -->
+                        <div class="mb-4">
+                            <label class="form-label fw-bold">Aspect Ratio</label>
+                            <select class="form-select" @bind="customClipAspectRatioMode" @bind:after="OnCustomClipAspectRatioChanged">
+                                <option value="@AspectRatioMode.Original">Original</option>
+                                <option value="@AspectRatioMode.VerticalCrop">Vertical (9:16) - Center Crop</option>
+                                <option value="@AspectRatioMode.VerticalBlurBackground">Vertical (9:16) - Blurred Background</option>
+                                <option value="@AspectRatioMode.VerticalStackSplitScreen">Vertical (9:16) - Stack Split Screen</option>
+                                <option value="@AspectRatioMode.VerticalStackPodcast">Vertical (9:16) - Podcast Layout</option>
+                                <option value="@AspectRatioMode.VerticalLetterbox">Vertical (9:16) - Letterbox</option>
+                            </select>
+                            @if (!string.IsNullOrEmpty(customClipPreviewFrameBase64) && customClipPreviewAspectRatioMode != customClipAspectRatioMode)
+                            {
+                                <small class="text-info">
+                                    <span class="oi oi-info"></span> Aspect ratio changed - click "Generate Preview" to update
+                                </small>
+                            }
+                        </div>
+
+                        <!-- Subtitle Options -->
+                        <div class="mb-3">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="enableCustomClipSubtitles" @bind="customClipSubtitleOptions.Enabled">
+                                <label class="form-check-label fw-bold" for="enableCustomClipSubtitles">Burn-in Subtitles</label>
+                            </div>
+                            @if (string.IsNullOrEmpty(project?.TranscriptPath))
+                            {
+                                <small class="text-warning">
+                                    <span class="oi oi-warning"></span> No transcript available. Generate a transcript first to enable subtitles.
+                                </small>
+                            }
+                        </div>
+
+                        @if (customClipSubtitleOptions.Enabled && !string.IsNullOrEmpty(project?.TranscriptPath))
+                        {
+                            <div class="card bg-light">
+                                <div class="card-body">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <!-- Font Settings -->
+                                            <div class="mb-3">
+                                                <label class="form-label">Font</label>
+                                                <select class="form-select form-select-sm" @bind="customClipSubtitleOptions.FontName">
+                                                    <option value="Arial">Arial</option>
+                                                    <option value="Helvetica">Helvetica</option>
+                                                    <option value="Verdana">Verdana</option>
+                                                    <option value="Impact">Impact</option>
+                                                    <option value="Georgia">Georgia</option>
+                                                    <option value="Times New Roman">Times New Roman</option>
+                                                    <option value="Courier New">Courier New</option>
+                                                </select>
+                                            </div>
+
+                                            <div class="mb-3">
+                                                <label class="form-label">Font Size: @customClipSubtitleOptions.FontSize</label>
+                                                <input type="range" class="form-range" min="8" max="48" step="2" 
+                                                       value="@customClipSubtitleOptions.FontSize" 
+                                                       @onchange="@(e => customClipSubtitleOptions.FontSize = int.Parse(e.Value?.ToString() ?? "24"))">
+                                            </div>
+
+                                            <div class="mb-3">
+                                                <label class="form-label">Position</label>
+                                                <select class="form-select form-select-sm" @bind="customClipSubtitleOptions.Position">
+                                                    <option value="@SubtitlePosition.Bottom">Bottom</option>
+                                                    <option value="@SubtitlePosition.Middle">Middle</option>
+                                                    <option value="@SubtitlePosition.Top">Top</option>
+                                                </select>
+                                            </div>
+
+                                            <div class="mb-3">
+                                                <label class="form-label">Vertical Margin: @customClipSubtitleOptions.MarginVertical px</label>
+                                                <input type="range" class="form-range" min="10" max="200" step="10" 
+                                                       value="@customClipSubtitleOptions.MarginVertical" 
+                                                       @onchange="@(e => customClipSubtitleOptions.MarginVertical = int.Parse(e.Value?.ToString() ?? "50"))">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <!-- Color Settings -->
+                                            <div class="mb-3">
+                                                <label class="form-label">Text Color</label>
+                                                <div class="input-group input-group-sm">
+                                                    <span class="input-group-text">#</span>
+                                                    <input type="text" class="form-control" @bind="customClipSubtitleOptions.PrimaryColor" maxlength="6" placeholder="FFFFFF">
+                                                    <input type="color" class="form-control form-control-color" value="@("#" + customClipSubtitleOptions.PrimaryColor)" 
+                                                           @onchange="@(e => customClipSubtitleOptions.PrimaryColor = e.Value?.ToString()?.TrimStart('#') ?? "FFFFFF")" style="max-width: 50px;">
+                                                </div>
+                                            </div>
+
+                                            <div class="mb-3">
+                                                <label class="form-label">Outline Color</label>
+                                                <div class="input-group input-group-sm">
+                                                    <span class="input-group-text">#</span>
+                                                    <input type="text" class="form-control" @bind="customClipSubtitleOptions.OutlineColor" maxlength="6" placeholder="000000">
+                                                    <input type="color" class="form-control form-control-color" value="@("#" + customClipSubtitleOptions.OutlineColor)" 
+                                                           @onchange="@(e => customClipSubtitleOptions.OutlineColor = e.Value?.ToString()?.TrimStart('#') ?? "000000")" style="max-width: 50px;">
+                                                </div>
+                                            </div>
+
+                                            <div class="mb-3">
+                                                <label class="form-label">Outline Width: @customClipSubtitleOptions.OutlineWidth</label>
+                                                <input type="range" class="form-range" min="0" max="4" 
+                                                       value="@customClipSubtitleOptions.OutlineWidth" 
+                                                       @onchange="@(e => customClipSubtitleOptions.OutlineWidth = int.Parse(e.Value?.ToString() ?? "2"))">
+                                            </div>
+
+                                            <div class="mb-3">
+                                                <label class="form-label">Shadow Depth: @customClipSubtitleOptions.ShadowDepth</label>
+                                                <input type="range" class="form-range" min="0" max="4" 
+                                                       value="@customClipSubtitleOptions.ShadowDepth" 
+                                                       @onchange="@(e => customClipSubtitleOptions.ShadowDepth = int.Parse(e.Value?.ToString() ?? "1"))">
+                                            </div>
+
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" id="customClipAllCaps" @bind="customClipSubtitleOptions.AllCaps">
+                                                <label class="form-check-label" for="customClipAllCaps">ALL CAPS</label>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Preview -->
+                                    <div class="mt-3">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <label class="form-label mb-0 fw-bold">Preview</label>
+                                            <button type="button" class="btn btn-sm btn-outline-primary" @onclick="GenerateCustomClipPreview" disabled="@isGeneratingCustomClipPreview">
+                                                @if (isGeneratingCustomClipPreview)
+                                                {
+                                                    <span class="spinner-border spinner-border-sm" role="status"></span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="oi oi-reload"></span>
+                                                }
+                                                Generate Preview
+                                            </button>
+                                        </div>
+                                        
+                                        @if (!string.IsNullOrEmpty(customClipPreviewFrameBase64))
+                                        {
+                                            <div class="position-relative text-center" style="background-color: #000; border-radius: 8px; overflow: hidden;">
+                                                <img src="@customClipPreviewFrameBase64" alt="Video preview" style="max-width: 100%; max-height: 300px; object-fit: contain;" />
+                                                <div class="position-absolute w-100" style="@GetCustomClipSubtitlePreviewPosition()">
+                                                    <span style="
+                                                        font-family: @customClipSubtitleOptions.FontName;
+                                                        font-size: @(Math.Max(12, customClipSubtitleOptions.FontSize / 2))px;
+                                                        color: #@customClipSubtitleOptions.PrimaryColor;
+                                                        text-shadow: @(customClipSubtitleOptions.OutlineWidth)px @(customClipSubtitleOptions.OutlineWidth)px @(customClipSubtitleOptions.ShadowDepth)px #@customClipSubtitleOptions.OutlineColor,
+                                                                     -@(customClipSubtitleOptions.OutlineWidth)px -@(customClipSubtitleOptions.OutlineWidth)px @(customClipSubtitleOptions.ShadowDepth)px #@customClipSubtitleOptions.OutlineColor,
+                                                                     @(customClipSubtitleOptions.OutlineWidth)px -@(customClipSubtitleOptions.OutlineWidth)px @(customClipSubtitleOptions.ShadowDepth)px #@customClipSubtitleOptions.OutlineColor,
+                                                                     -@(customClipSubtitleOptions.OutlineWidth)px @(customClipSubtitleOptions.OutlineWidth)px @(customClipSubtitleOptions.ShadowDepth)px #@customClipSubtitleOptions.OutlineColor;
+                                                        @(customClipSubtitleOptions.AllCaps ? "text-transform: uppercase;" : "")
+                                                        padding: 4px 8px;
+                                                        background-color: rgba(0,0,0,0.3);
+                                                        border-radius: 4px;
+                                                    ">
+                                                        Sample subtitle text
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <div class="p-3 text-center" style="background-color: #333; border-radius: 8px;">
+                                                <span style="
+                                                    font-family: @customClipSubtitleOptions.FontName;
+                                                    font-size: @(customClipSubtitleOptions.FontSize)px;
+                                                    color: #@customClipSubtitleOptions.PrimaryColor;
+                                                    text-shadow: @(customClipSubtitleOptions.OutlineWidth)px @(customClipSubtitleOptions.OutlineWidth)px @(customClipSubtitleOptions.ShadowDepth)px #@customClipSubtitleOptions.OutlineColor;
+                                                    @(customClipSubtitleOptions.AllCaps ? "text-transform: uppercase;" : "")
+                                                ">
+                                                    Preview Subtitle Text
+                                                </span>
+                                                <p class="text-muted small mt-2 mb-0">Click "Generate Preview" to see subtitles on actual video frame</p>
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" @onclick="CancelCustomClipExtraction">Cancel</button>
+                        <button type="button" class="btn btn-success" @onclick="ConfirmExtractCustomClip" disabled="@isExtractingCustomClip">
+                            @if (isExtractingCustomClip)
+                            {
+                                <span class="spinner-border spinner-border-sm" role="status"></span>
+                                <span> Extracting...</span>
+                            }
+                            else
+                            {
+                                <span class="oi oi-scissors me-1"></span>
+                                <span> Extract Clip</span>
+                            }
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+ 
+    <!-- Project Information Card -->
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center" 
+             style="cursor: pointer;" 
+             data-bs-toggle="collapse" 
+             data-bs-target="#projectInfoCollapse"
+             aria-expanded="true"
+             aria-controls="projectInfoCollapse">
+            <h5 class="mb-0">
+                <span class="oi oi-info me-2"></span>Project Information
+            </h5>
+            <span class="oi oi-chevron-bottom"></span>
+        </div>
+        <div class="collapse show" id="projectInfoCollapse">
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-8">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <p><strong>Status:</strong> 
+                                    <span class="badge @GetStatusBadgeClass(project.Status)">
+                                        @project.Status.ToString().Replace("Status", "")
+                                    </span>
+                                </p>
+                                @if (!string.IsNullOrEmpty(project.Description))
+                                {
+                                    <p><strong>Description:</strong> @project.Description</p>
+                                }
+                                @if (project.Duration.HasValue)
+                                {
+                                    <p><strong>Duration:</strong> @FormatDuration(project.Duration.Value)</p>
+                                }
+                                @if (project.FileSizeBytes.HasValue)
+                                {
+                                    <p><strong>File Size:</strong> @FormatFileSize(project.FileSizeBytes.Value)</p>
+                                }
+                            </div>
+                            <div class="col-md-6">
+                                <p><strong>Created:</strong> @project.CreatedAt.ToString("MMM dd, yyyy 'at' h:mm tt")</p>
+                                <p><strong>Updated:</strong> @project.UpdatedAt.ToString("MMM dd, yyyy 'at' h:mm tt")</p>
+                                @if (!string.IsNullOrEmpty(project.YouTubeUrl))
+                                {
+                                    <p><strong>YouTube URL:</strong> 
+                                        <a href="@project.YouTubeUrl" target="_blank" class="text-decoration-none">
+                                            @project.YouTubeUrl <span class="oi oi-external-link" style="font-size: 0.8em;"></span>
+                                        </a>
+                                    </p>
+                                }
+                                <p><strong>Video Path:</strong> 
+                                    <small class="text-muted text-break">@project.VideoPath</small>
+                                </p>
+                                @if (!string.IsNullOrEmpty(project.TranscriptPath))
+                                {
+                                    <p><strong>Transcript:</strong> 
+                                        @if (File.Exists(project.TranscriptPath))
+                                        {
+                                            <a href="#" @onclick="() => OpenTranscriptFile(project.TranscriptPath)" @onclick:preventDefault="true" 
+                                               class="text-success text-decoration-none" title="Open transcript location">
+                                                Available
+                                                <span class="oi oi-external-link ms-1" style="font-size: 0.75em;"></span>
+                                            </a>
+                                        }
+                                        else
+                                        {
+                                            <small class="text-warning">File not found</small>
+                                        }
+                                    </p>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        @if (!string.IsNullOrEmpty(project.ThumbnailPath) && File.Exists(project.ThumbnailPath))
+                        {
+                            <div class="text-center">
+                                <img src="@FileStreamService.GetThumbnailUrl(project.ThumbnailPath)" 
+                                     class="img-fluid rounded" 
+                                     style="max-height: 200px; object-fit: cover;" 
+                                     alt="@project.Name thumbnail" />
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="text-center p-3 bg-light rounded" style="height: 200px;">
+                                <div class="d-flex align-items-center justify-content-center h-100">
+                                    <span class="oi oi-video" style="font-size: 3rem; color: #6c757d;"></span>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Video Player Section -->
+    @if (!string.IsNullOrEmpty(project.VideoPath) && File.Exists(project.VideoPath))
+    {
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center" 
+                 style="cursor: pointer;" 
+                 data-bs-toggle="collapse" 
+                 data-bs-target="#videoPlayerCollapse"
+                 aria-expanded="true"
+                 aria-controls="videoPlayerCollapse">
+                <h5 class="mb-0">
+                    <span class="oi oi-video me-2"></span>Video Player
+                </h5>
+                <div class="d-flex align-items-center gap-2">
+                    <div class="btn-group btn-group-sm" role="group" onclick="event.stopPropagation();">
+                        <button class="btn btn-outline-secondary" @onclick="() => SeekToTime(TimeSpan.Zero)">
+                            <span class="oi oi-media-skip-backward"></span> Start
+                        </button>
+                        @if (segments.Any())
+                        {
+                            <div class="dropdown">
+                                <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                                    <span class="oi oi-list"></span> Jump to Segment
+                                </button>
+                                <ul class="dropdown-menu">
+                                    @foreach (var segment in segments.OrderBy(s => s.StartTime))
+                                    {
+                                        <li>
+                                            <a class="dropdown-item" href="#" @onclick="() => SeekToTime(segment.StartTime)" @onclick:preventDefault="true">
+                                                @FormatDuration(segment.StartTime) - @segment.Summary.Substring(0, Math.Min(segment.Summary.Length, 30))@(segment.Summary.Length > 30 ? "..." : "")
+                                            </a>
+                                        </li>
+                                    }
+                                </ul>
+                            </div>
+                        }
+                    </div>
+                    <span class="oi oi-chevron-bottom"></span>
+                </div>
+            </div>
+            <div class="collapse show" id="videoPlayerCollapse">
+                <div class="card-body p-0">
+                    <div class="position-relative d-flex justify-content-center">
+                        <!-- Video Loading Spinner Overlay -->
+                        <div id="videoLoadingSpinner" class="position-absolute top-50 start-50 translate-middle" 
+                             style="z-index: 10; display: none;">
+                            <div class="d-flex flex-column align-items-center">
+                                <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+                                    <span class="visually-hidden">Loading video...</span>
+                                </div>
+                                <p class="mt-2 text-muted small">Loading video...</p>
+                            </div>
+                        </div>
+                        
+                        <video id="videoPlayer" class="w-100" controls preload="metadata" style="max-width: 600px;">
+                            <source src="@FileStreamService.GetVideoUrl(project.VideoPath)" type="@GetVideoMimeType(project.VideoPath)" />
+                            Your browser does not support the video tag.
+                        </video>
+                    </div>
+                </div>
+                <div class="card-footer">
+                    <div class="row">
+                        <div class="col-md-4">
+                            <small class="text-muted">Current Time: <span id="currentTime">00:00</span></small>
+                        </div>
+                        <div class="col-md-4 text-center">
+                            <small class="text-muted">Duration: @(project.Duration.HasValue ? FormatDuration(project.Duration.Value) : "Unknown")</small>
+                        </div>
+                        <div class="col-md-4 text-end">
+                            <button class="btn btn-sm btn-outline-secondary" @onclick="ToggleFullscreen">
+                                <span class="oi oi-fullscreen-enter"></span> Fullscreen
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Custom Clip Creator Section -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center"
+                 style="cursor: pointer;" 
+                 data-bs-toggle="collapse" 
+                 data-bs-target="#clipCreatorCollapse"
+                 aria-expanded="false"
+                 aria-controls="clipCreatorCollapse">
+                <h5 class="mb-0">
+                    <span class="oi oi-scissors me-2"></span>Custom Clip Creator
+                </h5>
+                <span class="oi oi-chevron-bottom"></span>
+            </div>
+            <div class="collapse" id="clipCreatorCollapse">
+                <div class="card-body">
+                    <div class="alert alert-info mb-3">
+                        <span class="oi oi-info me-2"></span>
+                        <small>Use the video player to find your desired start and end points, then click "Set Start" and "Set End" to capture the times. This creates a temporary clip without saving to the database.</small>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold">Start Time</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" @bind="customClipStartTime" 
+                                       placeholder="00:00:00" />
+                                <button class="btn btn-outline-primary" @onclick="SetCustomClipStart">
+                                    <span class="oi oi-media-step-backward"></span> Set Start
+                                </button>
+                            </div>
+                            <small class="text-muted">Format: HH:MM:SS or MM:SS</small>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold">End Time</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" @bind="customClipEndTime" 
+                                       placeholder="00:00:00" />
+                                <button class="btn btn-outline-primary" @onclick="SetCustomClipEnd">
+                                    <span class="oi oi-media-step-forward"></span> Set End
+                                </button>
+                            </div>
+                            <small class="text-muted">Format: HH:MM:SS or MM:SS</small>
+                        </div>
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(customClipStartTime) && !string.IsNullOrEmpty(customClipEndTime))
+                    {
+                        var startTs = ParseTimeSpan(customClipStartTime);
+                        var endTs = ParseTimeSpan(customClipEndTime);
+                        
+                        if (startTs.HasValue && endTs.HasValue && endTs > startTs)
+                        {
+                            var duration = endTs.Value - startTs.Value;
+                            <div class="alert alert-success">
+                                <strong>Preview:</strong> Clip from @FormatDuration(startTs.Value) to @FormatDuration(endTs.Value)
+                                <br/>
+                                <strong>Duration:</strong> @FormatDuration(duration)
+                            </div>
+
+                            <div class="d-flex gap-2 flex-wrap">
+                                <button class="btn btn-primary" @onclick="PreviewCustomClip">
+                                    <span class="oi oi-media-play"></span> Preview
+                                </button>
+                                <button class="btn btn-success" @onclick="ShowCustomClipOptions" disabled="@isExtractingCustomClip">
+                                    @if (isExtractingCustomClip)
+                                    {
+                                        <span class="spinner-border spinner-border-sm" role="status"></span>
+                                    }
+                                    else
+                                    {
+                                        <span class="oi oi-scissors"></span>
+                                    }
+                                    Extract Clip...
+                                </button>
+                                <button class="btn btn-outline-secondary" @onclick="ClearCustomClip">
+                                    <span class="oi oi-x"></span> Clear
+                                </button>
+                            </div>
+                            
+                            @if (!string.IsNullOrEmpty(lastExtractedCustomClipPath) && File.Exists(lastExtractedCustomClipPath))
+                            {
+                                <div class="mt-3 p-3 bg-opacity-10 border border-success rounded">
+                                    <h6 class="text-success mb-2">
+                                        <span class="oi oi-check me-1"></span> Last Extracted Clip
+                                    </h6>
+                                    <p class="small text-muted mb-2">@Path.GetFileName(lastExtractedCustomClipPath)</p>
+                                    <div class="d-flex gap-2 flex-wrap">
+                                        <button class="btn btn-outline-success btn-sm" @onclick="DownloadLastCustomClip">
+                                            <span class="oi oi-data-transfer-download"></span> Download
+                                        </button>
+                                        <button class="btn btn-outline-info btn-sm" @onclick="OpenLastCustomClipFolder">
+                                            <span class="oi oi-folder-open"></span> Open Folder
+                                        </button>
+                                        @if (availablePublishers.Any())
+                                        {
+                                            <div class="dropdown d-inline-block">
+                                                <button type="button" class="btn btn-outline-primary btn-sm dropdown-toggle" 
+                                                        data-bs-toggle="dropdown" 
+                                                        data-bs-boundary="clippingParents"
+                                                        data-bs-popper-config='{"strategy":"fixed"}'
+                                                        aria-expanded="false">
+                                                    <span class="oi oi-share-boxed"></span> Post to
+                                                </button>
+                                                <ul class="dropdown-menu dropdown-menu-end">
+                                                    @foreach (var publisher in availablePublishers)
+                                                    {
+                                                        <li>
+                                                            <a class="dropdown-item" href="#" @onclick="() => ShowCustomClipPostDialog(publisher.PlatformName)" @onclick:preventDefault="true">
+                                                                <i class="@publisher.PlatformIcon me-2"></i>@publisher.PlatformName
+                                                                @if (publisherAuthStatus.TryGetValue(publisher.PlatformName, out var isAuth) && isAuth)
+                                                                {
+                                                                    <span class="badge bg-success ms-2">Connected</span>
+                                                                }
+                                                                else
+                                                                {
+                                                                    <span class="badge bg-secondary ms-2">Not Connected</span>
+                                                                }
+                                                            </a>
+                                                        </li>
+                                                    }
+                                                </ul>
+                                            </div>
+                                        }
+                                        <button class="btn btn-outline-warning btn-sm" @onclick="ShowCustomClipOptions" title="Re-extract with different settings">
+                                            <span class="oi oi-loop-circular"></span> Extract Again
+                                        </button>
+                                    </div>
+                                </div>
+                            }
+                        }
+                        else
+                        {
+                            <div class="alert alert-warning">
+                                Please ensure end time is after start time and both times are valid.
+                            </div>
+                        }
+                    }
+
+                    @if (isExtractingCustomClip)
+                    {
+                        <div class="mt-3">
+                            <div class="progress">
+                                <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                     role="progressbar" style="width: 100%">
+                                    Extracting clip...
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+    else if (!string.IsNullOrEmpty(project.VideoPath))
+    {
+        <div class="card mb-4">
+            <div class="card-body text-center py-4">
+                <span class="oi oi-ban" style="font-size: 2rem; color: #dc3545;"></span>
+                <p class="mt-2 text-muted">Video file not found at: @project.VideoPath</p>
+                <small class="text-muted">Please check if the file exists and is accessible.</small>
+            </div>
+        </div>
+    }
+
+    <!-- Segments Section -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center" 
+             style="cursor: pointer;" 
+             data-bs-toggle="collapse" 
+             data-bs-target="#segmentsCollapse"
+             aria-expanded="true"
+             aria-controls="segmentsCollapse">
+            <h5 class="mb-0">
+                <span class="oi oi-list me-2"></span>Segments (@segments.Count())
+            </h5>
+            <div class="d-flex align-items-center gap-2">
+                @if (segments.Any())
+                {
+                    <div class="btn-group btn-group-sm" role="group" onclick="event.stopPropagation();">
+                        <button class="btn btn-outline-primary" @onclick="() => BulkApproveSegments(SegmentStatus.Approved)">
+                            <span class="oi oi-check"></span> Approve All
+                        </button>
+                        <button class="btn btn-outline-success" @onclick="() => BulkApproveSegments(SegmentStatus.Extracting)">
+                            <span class="oi oi-media-play"></span> Extract All
+                        </button>
+                    </div>
+                }
+                <span class="oi oi-chevron-bottom"></span>
+            </div>
+        </div>
+        <div class="collapse show" id="segmentsCollapse">
+            <div class="card-body">
+                @if (!segments.Any())
+                {
+                    <div class="text-center py-4">
+                        <span class="oi oi-media-step-forward" style="font-size: 2rem; color: #6c757d;"></span>
+                        <p class="mt-2 text-muted">No segments generated yet.</p>
+                        @if (project.Status == ProjectStatus.VideoUploaded || project.Status == ProjectStatus.TranscriptGenerated || project.Status == ProjectStatus.SegmentsGenerated || segments.Count() == 0)
+                        {
+                            <button class="btn btn-primary" @onclick="GenerateSegments" disabled="@isGeneratingSegments">
+                                @if (isGeneratingSegments)
+                                {
+                                    <span class="spinner-border spinner-border-sm" role="status"></span>
+                                }
+                                else
+                                {
+                                    <span class="oi oi-cog"></span>
+                                }
+                                Generate Segments
+                            </button>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <!-- Regenerate Segments Button for existing segments -->
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div class="text-muted">
+                            <small>
+                                @{
+                                    var approvedCount = segments.Count(s => s.Status == SegmentStatus.Approved || s.Status == SegmentStatus.Extracting || s.Status == SegmentStatus.Extracted);
+                                    var generatedCount = segments.Count(s => s.Status == SegmentStatus.Generated);
+                                }
+                                @approvedCount approved, @generatedCount pending approval
+                            </small>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-outline-danger btn-sm" @onclick="ConfirmDeleteAllProjectSegments" disabled="@isDeletingAllSegments">
+                                @if (isDeletingAllSegments)
+                                {
+                                    <span class="spinner-border spinner-border-sm" role="status"></span>
+                                }
+                                else
+                                {
+                                    <span class="oi oi-trash"></span>
+                                }
+                                Delete All
+                            </button>
+                            <button class="btn btn-outline-primary btn-sm" @onclick="ConfirmRegenerateSegments" disabled="@isGeneratingSegments">
+                                @if (isGeneratingSegments)
+                                {
+                                    <span class="spinner-border spinner-border-sm" role="status"></span>
+                                }
+                                else
+                                {
+                                    <span class="oi oi-reload"></span>
+                                }
+                                Regenerate Segments
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        @foreach (var segment in segments.OrderBy(a=> a.StartTime))
+                        {
+                            <div class="col-lg-6 mb-3">
+                                <div class="card h-100 @(segment.Status == SegmentStatus.Approved ? "border-primary" : segment.Status == SegmentStatus.Extracted ? "border-success" : "")">
+                                    <div class="card-body">
+                                        <div class="d-flex justify-content-between align-items-start mb-2">
+                                            <h6 class="card-title mb-0">
+                                                <a href="#" @onclick="() => SeekToTime(segment.StartTime)" @onclick:preventDefault="true" class="text-decoration-none">
+                                                    @FormatDuration(segment.StartTime) - @FormatDuration(segment.EndTime)
+                                                </a>
+                                                <small class="text-muted">(@FormatDuration(segment.EndTime - segment.StartTime))</small>
+                                            </h6>
+                                            <span class="badge @GetSegmentStatusBadgeClass(segment.Status)">
+                                                @segment.Status
+                                            </span>
+                                        </div>
+                                        
+                                        <div class="mb-2">
+                                            <strong>Summary:</strong>
+                                            <p class="mb-1 small">@segment.Summary</p>
+                                        </div>
+                                        
+                                        @if (!string.IsNullOrEmpty(segment.Reasoning))
+                                        {
+                                            <div class="mb-2">
+                                                <strong>Reasoning:</strong>
+                                                <p class="mb-1 small text-muted">@segment.Reasoning</p>
+                                            </div>
+                                        }
+                                        
+                                        <div class="mb-3">
+                                            <strong>Transcript:</strong>
+                                            <p class="small text-muted" style="max-height: 100px; overflow-y: auto;">@segment.TranscriptText</p>
+                                        </div>
+                                        
+                                        <div class="btn-group w-100" role="group">
+                                            <button class="btn btn-outline-secondary btn-sm" @onclick="() => SeekToTime(segment.StartTime)">
+                                                <span class="oi oi-media-play"></span> Play
+                                            </button>
+                                            @if (segment.Status == SegmentStatus.Generated)
+                                            {
+                                                <button class="btn btn-outline-primary btn-sm" @onclick="() => UpdateSegmentStatus(segment, SegmentStatus.Approved)">
+                                                    <span class="oi oi-check"></span> Approve
+                                                </button>
+                                            }
+                                            @if (segment.Status == SegmentStatus.Approved)
+                                            {
+                                                <button class="btn btn-outline-success btn-sm" @onclick="() => ExtractSegment(segment)" disabled="@(extractingSegmentId == segment.Id)">
+                                                    @if (extractingSegmentId == segment.Id)
+                                                    {
+                                                        <span class="spinner-border spinner-border-sm" role="status"></span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="oi oi-media-play"></span>
+                                                    }
+                                                    Extract
+                                                </button>
+                                            }
+                                            @if (segment.Status == SegmentStatus.Extracting)
+                                            {
+                                                <button class="btn btn-warning btn-sm" disabled>
+                                                    <span class="spinner-border spinner-border-sm" role="status"></span> Extracting...
+                                                </button>
+                                            }
+                                            @if (segment.Status == SegmentStatus.Extracted && !string.IsNullOrEmpty(segment.ClipPath))
+                                            {
+                                                <button class="btn btn-outline-success btn-sm" @onclick="() => DownloadClip(segment.ClipPath)">
+                                                    <span class="oi oi-data-transfer-download"></span> Download
+                                                </button>
+                                                <button class="btn btn-outline-info btn-sm" @onclick="() => OpenClipFolder(segment.ClipPath)">
+                                                    <span class="oi oi-folder-open"></span> Open Clip
+                                                </button>
+                                                <button class="btn btn-outline-warning btn-sm" @onclick="() => ExtractSegmentAgain(segment)" disabled="@(extractingSegmentId == segment.Id)" title="Re-extract with different settings">
+                                                    @if (extractingSegmentId == segment.Id)
+                                                    {
+                                                        <span class="spinner-border spinner-border-sm" role="status"></span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="oi oi-loop-circular"></span>
+                                                    }
+                                                    Extract Again
+                                                </button>
+                                                @if (availablePublishers.Any())
+                                                {
+                                                    <div class="dropdown d-inline-block">
+                                                        <button type="button" class="btn btn-outline-primary btn-sm dropdown-toggle" 
+                                                                data-bs-toggle="dropdown" 
+                                                                data-bs-boundary="clippingParents"
+                                                                data-bs-popper-config='{"strategy":"fixed"}'
+                                                                aria-expanded="false">
+                                                            <span class="oi oi-share-boxed"></span> Post to
+                                                        </button>
+                                                        <ul class="dropdown-menu dropdown-menu-end">
+                                                            @foreach (var publisher in availablePublishers)
+                                                            {
+                                                                <li>
+                                                                    <a class="dropdown-item" href="#" @onclick="() => ShowPostDialog(segment, publisher.PlatformName)" @onclick:preventDefault="true">
+                                                                        <i class="@publisher.PlatformIcon me-2"></i>@publisher.PlatformName
+                                                                        @if (publisherAuthStatus.TryGetValue(publisher.PlatformName, out var isAuth) && isAuth)
+                                                                        {
+                                                                            <span class="badge bg-success ms-2">Connected</span>
+                                                                        }
+                                                                        else
+                                                                        {
+                                                                            <span class="badge bg-secondary ms-2">Not Connected</span>
+                                                                        }
+                                                                    </a>
+                                                                </li>
+                                                            }
+                                                        </ul>
+                                                    </div>
+                                                }
+                                            }
+                                            <button class="btn btn-outline-danger btn-sm" @onclick="() => ConfirmDeleteSegment(segment)">
+                                                <span class="oi oi-trash"></span> Delete
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+    
+    private Project? project;
+    private IEnumerable<Segment> segments = new List<Segment>();
+    private DotNetObjectReference<ProjectDetail>? dotNetObjectRef;
+    
+    // Generation progress tracking
+    private bool isGeneratingSegments = false;
+    private string generationStatus = "";
+    private int generationProgressPercent = 0;
+    
+    // Deletion tracking
+    private bool isDeletingAllSegments = false;
+    
+    // Extraction tracking
+    private int? extractingSegmentId = null;
+
+    // Custom clip tracking
+    private string customClipStartTime = string.Empty;
+    private string customClipEndTime = string.Empty;
+    private bool isExtractingCustomClip = false;
+    private string? lastExtractedCustomClipPath = null;
+    private bool showCustomClipOptionsModal = false;
+    
+    // Custom clip subtitle options (separate from segment subtitle options)
+    private SubtitleOptions customClipSubtitleOptions = new();
+    private AspectRatioMode customClipAspectRatioMode = AspectRatioMode.VerticalStackPodcast;
+    private string customClipPreviewFrameBase64 = string.Empty;
+    private bool isGeneratingCustomClipPreview = false;
+    private AspectRatioMode? customClipPreviewAspectRatioMode = null;
+
+    // Subtitle options
+    private SubtitleOptions subtitleOptions = new();
+    private bool showSubtitleOptionsModal = false;
+    private Segment? segmentForExtraction = null;
+    private AspectRatioMode selectedAspectRatioMode = AspectRatioMode.VerticalStackPodcast;
+    
+    // Preview frame for subtitle preview
+    private string previewFrameBase64 = string.Empty;
+    private bool isGeneratingPreview = false;
+    private AspectRatioMode? previewAspectRatioMode = null;
+
+    // Custom confirmation modal
+    private bool showConfirmModal = false;
+    private string confirmMessage = "";
+    private TaskCompletionSource<bool>? confirmTcs;
+
+    // Social media publishing
+    private IEnumerable<ISocialMediaPublisher> availablePublishers = [];
+    private Dictionary<string, bool> publisherAuthStatus = new();
+    private bool showPostModal = false;
+    private Segment? selectedSegmentForPost;
+    private string selectedPlatformName = "";
+    private VideoValidationResult? videoValidationResult;
+    
+    // Post form fields
+    private string postTitle = "";
+    private string? postDescription = "";
+    private string postHashtags = "";
+    private PrivacyLevel postPrivacy = PrivacyLevel.Public;
+    private bool allowComments = true;
+    private bool allowDuet = true;
+    private bool allowStitch = true;
+    
+    // Publishing state
+    private bool isPublishing = false;
+    private bool isConnecting = false;
+    private double publishProgress = 0;
+    private string publishStatus = "";
+    private string publishError = "";
+    private string publishSuccess = "";
+    private string publishedUrl = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        dotNetObjectRef = DotNetObjectReference.Create(this);
+        await LoadProject();
+        await LoadSocialMediaPublishers();
+    }
+
+    private async Task LoadSocialMediaPublishers()
+    {
+        try
+        {
+            availablePublishers = SocialMediaPublisherService.GetAllPublishers();
+            
+            // Validate all tokens on load - this will disconnect any with invalid/expired tokens
+            await SocialMediaPublisherService.ValidateAllTokensAsync();
+            
+            // Get the updated authentication status after validation
+            publisherAuthStatus = await SocialMediaPublisherService.GetAuthenticationStatusAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading social media publishers: {ex.Message}");
+            availablePublishers = [];
+            publisherAuthStatus = new();
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (project?.Id != Id)
+        {
+            await LoadProject();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Initialize video player event listeners and pass the component reference
+            await JSRuntime.InvokeVoidAsync("initializeVideoPlayer", dotNetObjectRef);
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        dotNetObjectRef?.Dispose();
+    }
+
+    // Custom confirmation modal methods
+    private Task<bool> ShowConfirmDialog(string message)
+    {
+        confirmTcs = new TaskCompletionSource<bool>();
+        confirmMessage = message;
+        showConfirmModal = true;
+        StateHasChanged();
+        return confirmTcs.Task;
+    }
+
+    private void ConfirmAction()
+    {
+        confirmTcs?.SetResult(true);
+        showConfirmModal = false;
+        confirmTcs = null;
+        StateHasChanged();
+    }
+
+    private void CancelConfirm()
+    {
+        confirmTcs?.SetResult(false);
+        showConfirmModal = false;
+        confirmTcs = null;
+        StateHasChanged();
+    }
+
+    private async Task OpenTranscriptFile(string transcriptPath)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(transcriptPath) || !File.Exists(transcriptPath))
+            {
+                await JSRuntime.InvokeVoidAsync("alert", "Transcript file not found.");
+                return;
+            }
+
+            var success = await PlatformFileService.OpenFolderAndSelectFileAsync(transcriptPath);
+            
+            if (!success)
+            {
+                await JSRuntime.InvokeVoidAsync("alert", $"Transcript location: {transcriptPath}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error opening transcript folder: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", $"Failed to open transcript folder.\n\nTranscript location: {transcriptPath}");
+        }
+    }
+
+    // JavaScript-invokable methods for file streaming
+    [JSInvokable]
+    public long GetFileSize(string filePath)
+    {
+        try
+        {
+            return File.Exists(filePath) ? new FileInfo(filePath).Length : 0;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    [JSInvokable]
+    public async Task<byte[]> ReadFileChunk(string filePath, long start, long length)
+    {
+        try
+        {
+            if (!File.Exists(filePath))
+                return Array.Empty<byte>();
+
+            using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            fileStream.Seek(start, SeekOrigin.Begin);
+            
+            var buffer = new byte[length];
+            var bytesRead = await fileStream.ReadAsync(buffer, 0, (int)length);
+            
+            if (bytesRead < length)
+            {
+                Array.Resize(ref buffer, bytesRead);
+            }
+            
+            return buffer;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error reading file chunk: {ex.Message}");
+            return Array.Empty<byte>();
+        }
+    }
+
+    private async Task LoadProject()
+    {
+        try
+        {
+            project = await ProjectService.GetProjectByIdAsync(Id);
+            if (project != null)
+            {
+                segments = (await SegmentService.GetSegmentsByProjectIdAsync(Id));
+            }
+            else
+            {
+                // Project not found, redirect to projects page
+                Navigation.NavigateTo("/projects");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading project: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Failed to load project. Please try again.");
+            Navigation.NavigateTo("/projects");
+        }
+    }
+
+    private async Task SeekToTime(TimeSpan time)
+    {
+        await JSRuntime.InvokeVoidAsync("seekVideoToTime", time.TotalSeconds);
+    }
+
+    private async Task ToggleFullscreen()
+    {
+        await JSRuntime.InvokeVoidAsync("toggleVideoFullscreen");
+    }
+
+    private async Task RefreshData()
+    {
+        await LoadProject();
+    }
+
+    private async Task ConfirmDelete(Project project)
+    {
+        var confirmed = await ShowConfirmDialog(
+            $"Are you sure you want to delete '{project.Name}'?<br/><br/>This action cannot be undone and will delete all segments and clips.");
+        
+        if (confirmed)
+        {
+            try
+            {
+                await ProjectService.DeleteProjectAsync(project.Id);
+                Navigation.NavigateTo("/projects");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error deleting project: {ex.Message}");
+                await JSRuntime.InvokeVoidAsync("alert", "Failed to delete project. Please try again.");
+            }
+        }
+    }
+
+    private async Task ConfirmDeleteSegment(Segment segment)
+    {
+        var confirmed = await ShowConfirmDialog(
+            "Are you sure you want to delete this segment?<br/><br/>This action cannot be undone.");
+        
+        if (confirmed)
+        {
+            try
+            {
+                await SegmentService.DeleteSegmentAsync(segment.Id);
+                await LoadProject(); // Refresh segments
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error deleting segment: {ex.Message}");
+                await JSRuntime.InvokeVoidAsync("alert", "Failed to delete segment. Please try again.");
+            }
+        }
+    }
+
+    private async Task UpdateSegmentStatus(Segment segment, SegmentStatus newStatus)
+    {
+        try
+        {
+            segment.Status = newStatus;
+            await SegmentService.UpdateSegmentAsync(segment);
+            await LoadProject(); // Refresh segments
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error updating segment: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Failed to update segment. Please try again.");
+        }
+    }
+
+    private async Task BulkApproveSegments(SegmentStatus targetStatus)
+    {
+        try
+        {
+            var segmentsToUpdate = segments.Where(s => 
+                (targetStatus == SegmentStatus.Approved && s.Status == SegmentStatus.Generated) ||
+                (targetStatus == SegmentStatus.Extracting && s.Status == SegmentStatus.Approved)).ToList();
+            
+            if (!segmentsToUpdate.Any())
+            {
+                await JSRuntime.InvokeVoidAsync("alert", $"No segments available for {targetStatus} operation.");
+                return;
+            }
+
+            var action = targetStatus == SegmentStatus.Approved ? "approve" : "extract";
+            var confirmed = await ShowConfirmDialog(
+                $"Are you sure you want to {action} {segmentsToUpdate.Count} segment(s)?" +
+                (targetStatus == SegmentStatus.Extracting && subtitleOptions.Enabled 
+                    ? "<br/><br/>Subtitles will be burned in based on your current subtitle settings." 
+                    : ""));
+            
+            if (confirmed)
+            {
+                if (targetStatus == SegmentStatus.Approved)
+                {
+                    // Simple approval
+                    foreach (var segment in segmentsToUpdate)
+                    {
+                        segment.Status = targetStatus;
+                        await SegmentService.UpdateSegmentAsync(segment);
+                    }
+                }
+                else if (targetStatus == SegmentStatus.Extracting && project != null)
+                {
+                    // Extract each segment with current options
+                    for (int i = 0; i < segmentsToUpdate.Count; i++)
+                    {
+                        var segment = segmentsToUpdate[i];
+                        
+                        try
+                        {
+                            segment.Status = SegmentStatus.Extracting;
+                            await SegmentService.UpdateSegmentAsync(segment);
+                            StateHasChanged();
+
+                            var result = await VideoExtractionService.ExtractSegmentAsync(
+                                project, 
+                                segment, 
+                                selectedAspectRatioMode,
+                                subtitleOptions.Enabled ? subtitleOptions : null);
+                            
+                            if (result.Success)
+                            {
+                                segment.ClipPath = result.ClipPath;
+                                segment.Status = SegmentStatus.Extracted;
+                            }
+                            else
+                            {
+                                segment.Status = SegmentStatus.Failed;
+                                Console.WriteLine($"Extraction failed for segment {segment.Id}: {result.Error}");
+                            }
+                            
+
+                            await SegmentService.UpdateSegmentAsync(segment);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Error extracting segment {segment.Id}: {ex.Message}");
+                            segment.Status = SegmentStatus.Failed;
+                            await SegmentService.UpdateSegmentAsync(segment);
+                        }
+                    }
+                }
+                
+                
+                await LoadProject(); // Refresh segments
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error bulk updating segments: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Failed to update segments. Please try again.");
+        }
+    }
+
+    private async Task ConfirmRegenerateSegments()
+    {
+        if (project == null || isGeneratingSegments)
+            return;
+
+        try
+        {
+            var approvedSegments = segments.Where(s => s.Status == SegmentStatus.Approved || 
+                                                     s.Status == SegmentStatus.Extracting || 
+                                                     s.Status == SegmentStatus.Extracted).ToList();
+            
+            var pendingSegments = segments.Where(s => s.Status == SegmentStatus.Generated || 
+                                                     s.Status == SegmentStatus.Failed).ToList();
+
+            string confirmMessage;
+            if (approvedSegments.Any() && pendingSegments.Any())
+            {
+                confirmMessage = $"This will delete {pendingSegments.Count} pending segment(s) and generate new ones.<br/><br/>" +
+                               $"Your {approvedSegments.Count} approved segment(s) will be preserved.<br/><br/>" +
+                               "Do you want to continue?";
+            }
+            else if (approvedSegments.Any())
+            {
+                confirmMessage = $"This will generate new segments while preserving your {approvedSegments.Count} approved segment(s).<br/><br/>" +
+                               "Do you want to continue?";
+            }
+            else
+            {
+                confirmMessage = $"This will delete all {segments.Count()} existing segment(s) and generate new ones.<br/><br/>" +
+                               "This action cannot be undone. Do you want to continue?";
+            }
+
+            var confirmed = await ShowConfirmDialog(confirmMessage);
+            
+            if (confirmed)
+            {
+                await RegenerateSegments();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in ConfirmRegenerateSegments: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Failed to regenerate segments. Please try again.");
+        }
+    }
+
+    private async Task RegenerateSegments()
+    {
+        if (project == null || isGeneratingSegments)
+            return;
+
+        try
+        {
+            isGeneratingSegments = true;
+            generationProgressPercent = 0;
+            generationStatus = "Preparing to regenerate segments...";
+            StateHasChanged();
+
+            // Step 1: Delete non-approved segments
+            var segmentsToDelete = segments.Where(s => s.Status == SegmentStatus.Generated || 
+                                                      s.Status == SegmentStatus.Failed).ToList();
+            
+            if (segmentsToDelete.Any())
+            {
+                generationStatus = $"Removing {segmentsToDelete.Count} pending segment(s)...";
+                generationProgressPercent = 5;
+                StateHasChanged();
+
+                foreach (var segment in segmentsToDelete)
+                {
+                    await SegmentService.DeleteSegmentAsync(segment.Id);
+                }
+            }
+
+            // Step 2: Reload segments to reflect deletions
+            await LoadProject();
+            generationProgressPercent = 10;
+            StateHasChanged();
+
+            // Step 3: Generate new segments (reuse existing GenerateSegments logic)
+            await GenerateSegmentsInternal();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error regenerating segments: {ex.Message}");
+            generationStatus = $"Regeneration failed: {ex.Message}";
+            await Task.Delay(3000);
+        }
+        finally
+        {
+            isGeneratingSegments = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ConfirmDeleteAllProjectSegments()
+    {
+        if (project == null || isDeletingAllSegments)
+            return;
+
+        var segmentCount = segments.Count();
+        if (segmentCount == 0)
+            return;
+
+        var confirmed = await ShowConfirmDialog(
+            $"Are you sure you want to delete all {segmentCount} segment(s) from this project?<br/><br/>" +
+            "This will also delete any extracted clip files.<br/><br/>" +
+            "This action cannot be undone.");
+
+        if (confirmed)
+        {
+            await DeleteAllProjectSegments();
+        }
+    }
+
+    private async Task DeleteAllProjectSegments()
+    {
+        if (project == null)
+            return;
+
+        isDeletingAllSegments = true;
+        StateHasChanged();
+
+        try
+        {
+            var segmentsToDelete = segments.ToList();
+            foreach (var segment in segmentsToDelete)
+            {
+                await SegmentService.DeleteSegmentAsync(segment.Id);
+            }
+
+            await LoadProject();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error deleting segments: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", $"Failed to delete segments: {ex.Message}");
+        }
+        finally
+        {
+            isDeletingAllSegments = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task GenerateSegments()
+    {
+        if (project == null || isGeneratingSegments)
+            return;
+
+        try
+        {
+            isGeneratingSegments = true;
+            generationProgressPercent = 0;
+            generationStatus = "Initializing...";
+            StateHasChanged();
+
+            await GenerateSegmentsInternal();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error generating segments: {ex.Message}");
+            generationStatus = $"Generation failed: {ex.Message}";
+            await Task.Delay(3000);
+        }
+        finally
+        {
+            isGeneratingSegments = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task GenerateSegmentsInternal()
+    {
+        if (project == null)
+            return;
+
+        // Get user settings
+        var settings = await SettingsService.GetSettingsAsync();
+        
+        // Create project folder for transcript
+        var projectFolder = await ProjectService.CreateProjectFolderAsync(project.Id);
+        var transcriptFolder = Path.Combine(projectFolder, "transcripts");
+
+        // Update project status to generating transcript
+        project.Status = ProjectStatus.TranscriptGenerating;
+        await ProjectService.UpdateProjectAsync(project);
+        StateHasChanged();
+
+        // Step 1: Generate transcript if not exists
+        string? transcriptContent = null;
+        generationProgressPercent = 10;
+        
+        if (string.IsNullOrEmpty(project.TranscriptPath) || !File.Exists(project.TranscriptPath))
+        {
+            generationStatus = "Generating transcript...";
+            StateHasChanged();
+
+            var progress = new Progress<string>(status =>
+            {
+                generationStatus = status;
+                InvokeAsync(StateHasChanged);
+            });
+
+            var transcriptResult = await TranscriptService.GenerateTranscriptAsync(
+                project.VideoPath, 
+                transcriptFolder, 
+                settings, 
+                progress);
+
+            if (!transcriptResult.Success)
+            {
+                generationStatus = $"Transcript generation failed: {transcriptResult.Error}";
+                await Task.Delay(3000);
+                return;
+            }
+
+            // Update project with transcript path
+            project.TranscriptPath = transcriptResult.TranscriptPath;
+            project.Status = ProjectStatus.TranscriptGenerated;
+            await ProjectService.UpdateProjectAsync(project);
+            
+            transcriptContent = await TranscriptService.ReadTranscriptAsync(transcriptResult.TranscriptPath!);
+        }
+        else
+        {
+            generationStatus = "Loading existing transcript...";
+            transcriptContent = await TranscriptService.ReadTranscriptAsync(project.TranscriptPath);
+            generationProgressPercent = 30;
+            StateHasChanged();
+        }
+
+        if (string.IsNullOrEmpty(transcriptContent))
+        {
+            generationStatus = "Failed to read transcript content.";
+            await Task.Delay(3000);
+            return;
+        }
+
+        // Step 2: Generate segments using AI
+        generationProgressPercent = 50;
+        generationStatus = "Analyzing transcript and generating segments...";
+        project.Status = ProjectStatus.SegmentsGenerating;
+        await ProjectService.UpdateProjectAsync(project);
+        StateHasChanged();
+
+        var segmentProgress = new Progress<string>(status =>
+        {
+            generationStatus = status;
+            InvokeAsync(StateHasChanged);
+        });
+
+        var segmentsResult = await AiService.GenerateSegmentsAsync(
+            project, 
+            transcriptContent, 
+            settings, 
+            segmentProgress);
+
+        if (!segmentsResult.Success)
+        {
+            generationStatus = $"Segment generation failed: {segmentsResult.Error}";
+            await Task.Delay(3000);
+            return;
+        }
+
+        // Step 3: Save segments to database
+        generationProgressPercent = 80;
+        generationStatus = "Saving segments...";
+        StateHasChanged();
+
+        if (segmentsResult.Segments != null && segmentsResult.Segments.Any())
+        {
+            await SegmentService.CreateSegmentsAsync(segmentsResult.Segments);
+            
+            // Update project status
+            project.Status = ProjectStatus.SegmentsGenerated;
+            await ProjectService.UpdateProjectAsync(project);
+        }
+
+        // Step 4: Complete
+        generationProgressPercent = 100;
+        generationStatus = "Segments generated successfully!";
+        StateHasChanged();
+
+        await Task.Delay(1500); // Show success message briefly
+        
+        // Refresh the view
+        await LoadProject();
+    }
+
+    private async Task OpenClipFolder(string clipPath)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(clipPath) || !File.Exists(clipPath))
+            {
+                await JSRuntime.InvokeVoidAsync("alert", "Clip file not found.");
+                return;
+            }
+
+            // Use platform-specific service to open folder and select the file
+            var success = await PlatformFileService.OpenFolderAndSelectFileAsync(clipPath);
+            
+            if (!success)
+            {
+                // Fallback: show the path in an alert
+                await JSRuntime.InvokeVoidAsync("alert", $"Clip location: {clipPath}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error opening clip folder: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", $"Failed to open clip folder.\n\nClip location: {clipPath}");
+        }
+    }
+
+    private string GetStatusBadgeClass(ProjectStatus status)
+    {
+        return status switch
+        {
+            ProjectStatus.VideoUploaded => "bg-info",
+            ProjectStatus.TranscriptGenerating => "bg-warning",
+            ProjectStatus.TranscriptGenerated => "bg-primary",
+            ProjectStatus.SegmentsGenerating => "bg-warning",
+            ProjectStatus.SegmentsGenerated => "bg-success",
+            ProjectStatus.Completed => "bg-success",
+            _ => "bg-secondary"
+        };
+    }
+
+    private string GetSegmentStatusBadgeClass(SegmentStatus status)
+    {
+        return status switch
+        {
+            SegmentStatus.Generated => "bg-secondary",
+            SegmentStatus.Approved => "bg-primary",
+            SegmentStatus.Extracting => "bg-warning",
+            SegmentStatus.Extracted => "bg-success",
+            SegmentStatus.Failed => "bg-danger",
+            _ => "bg-secondary"
+        };
+    }
+
+    private string FormatDuration(TimeSpan duration)
+    {
+        if (duration.TotalHours >= 1)
+            return duration.ToString(@"h\:mm\:ss");
+        else
+            return duration.ToString(@"mm\:ss");
+    }
+
+    private string FormatFileSize(long bytes)
+    {
+        string[] suffixes = { "B", "KB", "MB", "GB", "TB" };
+        int counter = 0;
+        double number = bytes;
+        while (Math.Round(number / 1024) >= 1)
+        {
+            number /= 1024;
+            counter++;
+        }
+        return $"{number:n1}{suffixes[counter]}";
+    }
+
+    private string GetVideoMimeType(string videoPath)
+    {
+        var extension = Path.GetExtension(videoPath).ToLowerInvariant();
+        return extension switch
+        {
+            ".mp4" => "video/mp4",
+            ".webm" => "video/webm",
+            ".ogg" => "video/ogg",
+            ".avi" => "video/x-msvideo",
+            ".mov" => "video/quicktime",
+            ".wmv" => "video/x-ms-wmv",
+            ".flv" => "video/x-flv",
+            ".mkv" => "video/x-matroska",
+            _ => "video/mp4" // Default fallback
+        };
+    }
+
+    private async Task ExtractSegment(Segment segment)
+    {
+        if (project == null || extractingSegmentId.HasValue)
+            return;
+
+        // Show subtitle options modal
+        segmentForExtraction = segment;
+        showSubtitleOptionsModal = true;
+        StateHasChanged();
+    }
+
+    private async Task ConfirmExtractSegment()
+    {
+        if (project == null || segmentForExtraction == null || extractingSegmentId.HasValue)
+            return;
+
+        var segment = segmentForExtraction;
+        showSubtitleOptionsModal = false;
+
+        try
+        {
+            extractingSegmentId = segment.Id;
+            segment.Status = SegmentStatus.Extracting;
+            await SegmentService.UpdateSegmentAsync(segment);
+            StateHasChanged();
+
+            // Perform the extraction with subtitle options
+            var result = await VideoExtractionService.ExtractSegmentAsync(
+                project, 
+                segment, 
+                selectedAspectRatioMode,
+                subtitleOptions.Enabled ? subtitleOptions : null);
+            
+            if (result.Success)
+            {
+                segment.ClipPath = result.ClipPath;
+                segment.Status = SegmentStatus.Extracted;
+            }
+            else
+            {
+                segment.Status = SegmentStatus.Failed;
+                await JSRuntime.InvokeVoidAsync("alert", $"Extraction failed: {result.Error}");
+            }
+            
+            await SegmentService.UpdateSegmentAsync(segment);
+            await LoadProject(); // Refresh segments to show updated status
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error extracting segment: {ex.Message}");
+            segment.Status = SegmentStatus.Failed;
+            await SegmentService.UpdateSegmentAsync(segment);
+            await JSRuntime.InvokeVoidAsync("alert", $"Failed to extract segment: {ex.Message}");
+        }
+        finally
+        {
+            extractingSegmentId = null;
+            segmentForExtraction = null;
+            StateHasChanged();
+        }
+    }
+
+    private void CancelExtractSegment()
+    {
+        showSubtitleOptionsModal = false;
+        segmentForExtraction = null;
+        previewFrameBase64 = string.Empty;
+        StateHasChanged();
+    }
+
+    private async Task ExtractSegmentAgain(Segment segment)
+    {
+        if (project == null || extractingSegmentId.HasValue)
+            return;
+
+        // Show subtitle options modal for re-extraction
+        segmentForExtraction = segment;
+        showSubtitleOptionsModal = true;
+        previewFrameBase64 = string.Empty;
+        StateHasChanged();
+    }
+
+    private async Task GenerateSubtitlePreview()
+    {
+        if (project == null || segmentForExtraction == null || isGeneratingPreview)
+            return;
+
+        try
+        {
+            isGeneratingPreview = true;
+            StateHasChanged();
+
+            // Get a timestamp from the middle of the segment
+            var midpoint = segmentForExtraction.StartTime + (segmentForExtraction.EndTime - segmentForExtraction.StartTime) / 2;
+            
+            // Extract frame from video with the selected aspect ratio transformation
+            previewFrameBase64 = await FileStreamService.ExtractFrameAsBase64Async(
+                project.VideoPath, 
+                midpoint,
+                selectedAspectRatioMode);
+            
+            // Track which aspect ratio was used for this preview
+            previewAspectRatioMode = selectedAspectRatioMode;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error generating preview: {ex.Message}");
+        }
+        finally
+        {
+            isGeneratingPreview = false;
+            StateHasChanged();
+        }
+    }
+
+    private void OnAspectRatioChanged()
+    {
+        // Clear the preview when aspect ratio changes so user knows to regenerate
+        if (previewAspectRatioMode != selectedAspectRatioMode)
+        {
+            previewFrameBase64 = string.Empty;
+            previewAspectRatioMode = null;
+        }
+    }
+
+    private string GetSubtitlePreviewPosition()
+    {
+        return subtitleOptions.Position switch
+        {
+            SubtitlePosition.Top => $"top: {Math.Max(5, subtitleOptions.MarginVertical / 4)}px; left: 0;",
+            SubtitlePosition.Middle => "top: 50%; left: 0; transform: translateY(-50%);",
+            _ => $"bottom: {Math.Max(5, subtitleOptions.MarginVertical / 4)}px; left: 0;" // Bottom
+        };
+    }
+
+    private string GetPreviewSubtitleText()
+    {
+        if (segmentForExtraction != null && !string.IsNullOrEmpty(segmentForExtraction.TranscriptText))
+        {
+            // Get first few words from the transcript
+            var words = segmentForExtraction.TranscriptText.Split(' ').Take(8);
+            var text = string.Join(" ", words);
+            if (segmentForExtraction.TranscriptText.Split(' ').Length > 8)
+                text += "...";
+            return text;
+        }
+        return "Preview Subtitle Text";
+    }
+
+    private async Task DownloadClip(string clipPath)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(clipPath) || !File.Exists(clipPath))
+            {
+                await JSRuntime.InvokeVoidAsync("alert", "Clip file not found.");
+                return;
+            }
+
+            var fileName = Path.GetFileName(clipPath);
+            var fileBytes = await File.ReadAllBytesAsync(clipPath);
+            var base64 = Convert.ToBase64String(fileBytes);
+            
+            await JSRuntime.InvokeVoidAsync("downloadFile", fileName, base64);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error downloading clip: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Failed to download clip.");
+        }
+    }
+
+    [JSInvokable]
+    public async Task<double> GetCurrentVideoTime()
+    {
+        try
+        {
+            return await JSRuntime.InvokeAsync<double>("getCurrentVideoTime");
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private async Task SetCustomClipStart()
+    {
+        try
+        {
+            var currentTime = await JSRuntime.InvokeAsync<double>("getCurrentVideoTime");
+            var timeSpan = TimeSpan.FromSeconds(currentTime);
+            customClipStartTime = FormatDuration(timeSpan);
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error setting custom clip start: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Failed to get current video time.");
+        }
+    }
+
+    private async Task SetCustomClipEnd()
+    {
+        try
+        {
+            var currentTime = await JSRuntime.InvokeAsync<double>("getCurrentVideoTime");
+            var timeSpan = TimeSpan.FromSeconds(currentTime);
+            customClipEndTime = FormatDuration(timeSpan);
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error setting custom clip end: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Failed to get current video time.");
+        }
+    }
+
+    private TimeSpan? ParseTimeSpan(string timeString)
+    {
+        if (string.IsNullOrWhiteSpace(timeString))
+            return null;
+
+        try
+        {
+            var parts = timeString.Split(':');
+            
+            if (parts.Length == 2)
+            {
+                // MM:SS format
+                if (int.TryParse(parts[0], out int minutes) && int.TryParse(parts[1], out int seconds))
+                {
+                    return new TimeSpan(0, minutes, seconds);
+                }
+            }
+            else if (parts.Length == 3)
+            {
+                // HH:MM:SS format
+                if (int.TryParse(parts[0], out int hours) && 
+                    int.TryParse(parts[1], out int minutes) && 
+                    int.TryParse(parts[2], out int seconds))
+                {
+                    return new TimeSpan(hours, minutes, seconds);
+                }
+            }
+            
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task PreviewCustomClip()
+    {
+        var startTs = ParseTimeSpan(customClipStartTime);
+        if (startTs.HasValue)
+        {
+            await SeekToTime(startTs.Value);
+        }
+    }
+
+    private void ShowCustomClipOptions()
+    {
+        if (string.IsNullOrEmpty(customClipStartTime) || string.IsNullOrEmpty(customClipEndTime))
+            return;
+
+        var startTs = ParseTimeSpan(customClipStartTime);
+        var endTs = ParseTimeSpan(customClipEndTime);
+
+        if (!startTs.HasValue || !endTs.HasValue || endTs <= startTs)
+            return;
+
+        // Reset preview state
+        customClipPreviewFrameBase64 = string.Empty;
+        customClipPreviewAspectRatioMode = null;
+        
+        showCustomClipOptionsModal = true;
+        StateHasChanged();
+    }
+
+    private void CancelCustomClipExtraction()
+    {
+        showCustomClipOptionsModal = false;
+        customClipPreviewFrameBase64 = string.Empty;
+        customClipPreviewAspectRatioMode = null;
+        StateHasChanged();
+    }
+
+    private async Task ConfirmExtractCustomClip()
+    {
+        if (project == null || isExtractingCustomClip)
+            return;
+
+        var startTs = ParseTimeSpan(customClipStartTime);
+        var endTs = ParseTimeSpan(customClipEndTime);
+
+        if (!startTs.HasValue || !endTs.HasValue || endTs <= startTs)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", "Invalid start or end time.");
+            return;
+        }
+
+        try
+        {
+            isExtractingCustomClip = true;
+            StateHasChanged();
+
+            // Create a segment and save it to the database
+            var customSegment = new Segment
+            {
+                ProjectId = project.Id,
+                StartTime = startTs.Value,
+                EndTime = endTs.Value,
+                Summary = $"Custom Clip ({FormatDuration(startTs.Value)} - {FormatDuration(endTs.Value)})",
+                TranscriptText = "",
+                Status = SegmentStatus.Extracting
+            };
+
+            // Save the segment to the database
+            customSegment = await SegmentService.CreateSegmentAsync(customSegment);
+
+            var result = await VideoExtractionService.ExtractSegmentAsync(
+                project, 
+                customSegment, 
+                customClipAspectRatioMode,
+                customClipSubtitleOptions.Enabled ? customClipSubtitleOptions : null);
+
+            if (result.Success && !string.IsNullOrEmpty(result.ClipPath))
+            {
+                // Update the segment with the clip path and status
+                customSegment.ClipPath = result.ClipPath;
+                customSegment.Status = SegmentStatus.Extracted;
+                await SegmentService.UpdateSegmentAsync(customSegment);
+
+                // Store the path for later use (download, post)
+                lastExtractedCustomClipPath = result.ClipPath;
+                
+                showCustomClipOptionsModal = false;
+                
+                // Reload segments to show the new custom clip in the list
+                await LoadProject();
+                
+                await JSRuntime.InvokeVoidAsync("alert", "Clip extracted successfully and saved to segments! You can now download or post it.");
+            }
+            else
+            {
+                // Mark segment as failed if extraction failed
+                customSegment.Status = SegmentStatus.Failed;
+                await SegmentService.UpdateSegmentAsync(customSegment);
+                
+                await JSRuntime.InvokeVoidAsync("alert", $"Extraction failed: {result.Error}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error extracting custom clip: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", $"Failed to extract clip: {ex.Message}");
+        }
+        finally
+        {
+            isExtractingCustomClip = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task DownloadLastCustomClip()
+    {
+        if (string.IsNullOrEmpty(lastExtractedCustomClipPath) || !File.Exists(lastExtractedCustomClipPath))
+        {
+            await JSRuntime.InvokeVoidAsync("alert", "Clip file not found.");
+            return;
+        }
+
+        try
+        {
+            var fileName = Path.GetFileName(lastExtractedCustomClipPath);
+            var fileBytes = await File.ReadAllBytesAsync(lastExtractedCustomClipPath);
+            var base64 = Convert.ToBase64String(fileBytes);
+            
+            await JSRuntime.InvokeVoidAsync("downloadFile", fileName, base64);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error downloading clip: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", "Failed to download clip.");
+        }
+    }
+
+    private async Task OpenLastCustomClipFolder()
+    {
+        if (string.IsNullOrEmpty(lastExtractedCustomClipPath) || !File.Exists(lastExtractedCustomClipPath))
+        {
+            await JSRuntime.InvokeVoidAsync("alert", "Clip file not found.");
+            return;
+        }
+
+        var success = await PlatformFileService.OpenFolderAndSelectFileAsync(lastExtractedCustomClipPath);
+        
+        if (!success)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", $"Clip location: {lastExtractedCustomClipPath}");
+        }
+    }
+
+    private async Task ShowCustomClipPostDialog(string platformName)
+    {
+        if (string.IsNullOrEmpty(lastExtractedCustomClipPath) || !File.Exists(lastExtractedCustomClipPath))
+        {
+            await JSRuntime.InvokeVoidAsync("alert", "Clip file not found. Please extract the clip first.");
+            return;
+        }
+
+        // Create a temporary segment to use with the existing post dialog
+        var tempSegment = new Segment
+        {
+            ProjectId = project?.Id ?? 0,
+            StartTime = ParseTimeSpan(customClipStartTime) ?? TimeSpan.Zero,
+            EndTime = ParseTimeSpan(customClipEndTime) ?? TimeSpan.Zero,
+            Summary = "Custom Clip",
+            TranscriptText = "",
+            ClipPath = lastExtractedCustomClipPath,
+            Status = SegmentStatus.Extracted
+        };
+
+        await ShowPostDialog(tempSegment, platformName);
+    }
+
+    private async Task GenerateCustomClipPreview()
+    {
+        if (project == null || isGeneratingCustomClipPreview)
+            return;
+
+        var startTs = ParseTimeSpan(customClipStartTime);
+        var endTs = ParseTimeSpan(customClipEndTime);
+
+        if (!startTs.HasValue || !endTs.HasValue)
+            return;
+
+        try
+        {
+            isGeneratingCustomClipPreview = true;
+            StateHasChanged();
+
+            // Get a timestamp from the middle of the clip
+            var midpoint = startTs.Value + (endTs.Value - startTs.Value) / 2;
+            
+            // Extract frame from video with the selected aspect ratio transformation
+            customClipPreviewFrameBase64 = await FileStreamService.ExtractFrameAsBase64Async(
+                project.VideoPath, 
+                midpoint,
+                customClipAspectRatioMode);
+            
+            // Track which aspect ratio was used for this preview
+            customClipPreviewAspectRatioMode = customClipAspectRatioMode;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error generating preview: {ex.Message}");
+        }
+        finally
+        {
+            isGeneratingCustomClipPreview = false;
+            StateHasChanged();
+        }
+    }
+
+    private void OnCustomClipAspectRatioChanged()
+    {
+        // Clear the preview when aspect ratio changes so user knows to regenerate
+        if (customClipPreviewAspectRatioMode != customClipAspectRatioMode)
+        {
+            customClipPreviewFrameBase64 = string.Empty;
+            customClipPreviewAspectRatioMode = null;
+        }
+    }
+
+    private string GetCustomClipSubtitlePreviewPosition()
+    {
+        return customClipSubtitleOptions.Position switch
+        {
+            SubtitlePosition.Top => $"top: {Math.Max(5, customClipSubtitleOptions.MarginVertical / 4)}px; left: 0;",
+            SubtitlePosition.Middle => "top: 50%; left: 0; transform: translateY(-50%);",
+            _ => $"bottom: {Math.Max(5, customClipSubtitleOptions.MarginVertical / 4)}px; left: 0;" // Bottom
+        };
+    }
+
+    private void ClearCustomClip()
+    {
+        customClipStartTime = string.Empty;
+        customClipEndTime = string.Empty;
+        lastExtractedCustomClipPath = null;
+        customClipPreviewFrameBase64 = string.Empty;
+        customClipPreviewAspectRatioMode = null;
+        StateHasChanged();
+    }
+
+    // Social Media Publishing Methods
+    private async Task ShowPostDialog(Segment segment, string platformName)
+    {
+        selectedSegmentForPost = segment;
+        selectedPlatformName = platformName;
+        
+        // Reset form
+        postTitle = segment.Summary;
+        postDescription = "";
+        postHashtags = "";
+        postPrivacy = PrivacyLevel.Public;
+        allowComments = true;
+        allowDuet = true;
+        allowStitch = true;
+        publishProgress = 0;
+        publishStatus = "";
+        publishError = "";
+        publishSuccess = "";
+        publishedUrl = "";
+        
+        // Validate video for the selected platform
+        if (!string.IsNullOrEmpty(segment.ClipPath))
+        {
+            videoValidationResult = await SocialMediaPublisherService.ValidateVideoForPlatformAsync(
+                segment.ClipPath, platformName);
+        }
+        
+        showPostModal = true;
+        StateHasChanged();
+    }
+
+    private void ClosePostDialog()
+    {
+        showPostModal = false;
+        selectedSegmentForPost = null;
+        selectedPlatformName = "";
+        videoValidationResult = null;
+        StateHasChanged();
+    }
+
+    private async Task ConnectToPlatform()
+    {
+        var publisher = SocialMediaPublisherService.GetPublisher(selectedPlatformName);
+        if (publisher == null)
+        {
+            publishError = $"Publisher for {selectedPlatformName} not found.";
+            return;
+        }
+
+        try
+        {
+            isConnecting = true;
+            publishError = "";
+            StateHasChanged();
+
+            // The publisher handles everything: starting local listener, opening browser, waiting for callback
+            var result = await publisher.AuthenticateAsync(
+                timeout: TimeSpan.FromMinutes(5));
+
+            if (result.Success)
+            {
+                publisherAuthStatus[selectedPlatformName] = true;
+                publishError = "";
+            }
+            else
+            {
+                publishError = result.Error ?? "Authentication failed. Please try again.";
+            }
+
+            // Refresh auth status for all publishers
+            publisherAuthStatus = await SocialMediaPublisherService.GetAuthenticationStatusAsync();
+        }
+        catch (Exception ex)
+        {
+            publishError = $"Failed to connect: {ex.Message}";
+        }
+        finally
+        {
+            isConnecting = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task PublishToSelectedPlatform()
+    {
+        if (selectedSegmentForPost == null || string.IsNullOrEmpty(selectedSegmentForPost.ClipPath))
+        {
+            publishError = "No clip selected for publishing.";
+            return;
+        }
+
+        var publisher = SocialMediaPublisherService.GetPublisher(selectedPlatformName);
+        if (publisher == null)
+        {
+            publishError = $"Publisher for {selectedPlatformName} not found.";
+            return;
+        }
+
+        try
+        {
+            isPublishing = true;
+            publishError = "";
+            publishSuccess = "";
+            publishedUrl = "";
+            publishStatus = "Preparing upload...";
+            StateHasChanged();
+
+            // Parse hashtags
+            var tags = string.IsNullOrWhiteSpace(postHashtags)
+                ? new List<string>()
+                : postHashtags.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(t => t.Trim().TrimStart('#'))
+                    .Where(t => !string.IsNullOrWhiteSpace(t))
+                    .ToList();
+
+            var request = new PublishRequest
+            {
+                VideoPath = selectedSegmentForPost.ClipPath,
+                Title = postTitle,
+                Description = postDescription,
+                Tags = tags,
+                Privacy = postPrivacy,
+                AllowComments = allowComments,
+                AllowDuet = allowDuet,
+                AllowStitch = allowStitch
+            };
+
+            var progress = new Progress<double>(p =>
+            {
+                publishProgress = p;
+                publishStatus = p switch
+                {
+                    < 0.2 => "Initializing upload...",
+                    < 0.8 => "Uploading video...",
+                    < 1.0 => "Finalizing...",
+                    _ => "Complete!"
+                };
+                InvokeAsync(StateHasChanged);
+            });
+
+            var result = await publisher.PublishVideoAsync(request);
+            
+            if (result.Success)
+            {
+                publishSuccess = $"Successfully published to {selectedPlatformName}!";
+                publishedUrl = result.PostUrl ?? "";
+                publishStatus = "Published successfully!";
+            }
+            else
+            {
+                publishError = result.Error ?? "Unknown error occurred during publishing.";
+                
+                // If this was a token error, the account has been disconnected - refresh auth status
+                if (result.IsTokenError)
+                {
+                    publisherAuthStatus = await SocialMediaPublisherService.GetAuthenticationStatusAsync();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            publishError = $"Publishing failed: {ex.Message}";
+        }
+        finally
+        {
+            isPublishing = false;
+            StateHasChanged();
+        }
+    }
+}

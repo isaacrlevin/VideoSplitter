@@ -1,0 +1,71 @@
+﻿@inherits LayoutComponentBase
+
+<div class="page">
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <a href="/" class="logo-container">
+                <div class="logo-icon">
+                    <img src="images/logo.png" alt="VideoSplitter Logo" class="app-logo" />
+                </div>
+                <div class="logo-text">
+                    <h3>VideoSplitter</h3>
+                    <p class="version">AI-Powered Editor</p>
+                </div>
+            </a>
+        </div>
+
+        <nav class="nav-menu">
+            <div class="nav-item">
+                <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
+                    <span class="nav-icon oi oi-home" aria-hidden="true"></span>
+                    <span class="nav-text">Home</span>
+                </NavLink>
+            </div>
+            <div class="nav-item">
+                <NavLink class="nav-link" href="projects">
+                    <span class="nav-icon oi oi-video" aria-hidden="true"></span>
+                    <span class="nav-text">Projects</span>
+                </NavLink>
+            </div>
+            <div class="nav-item">
+                <NavLink class="nav-link" href="new-project">
+                    <span class="nav-icon oi oi-plus" aria-hidden="true"></span>
+                    <span class="nav-text">New Project</span>
+                </NavLink>
+            </div>
+            <div class="nav-item">
+                <NavLink class="nav-link" href="settings">
+                    <span class="nav-icon oi oi-cog" aria-hidden="true"></span>
+                    <span class="nav-text">Settings</span>
+                </NavLink>
+            </div>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="footer-content">
+                <small>© @DateTime.Now.Year VideoSplitter</small>
+            </div>
+        </div>
+    </div>
+
+    <main class="main-content">
+        <div class="top-bar">
+            <div class="search-container">
+                <span class="oi oi-magnifying-glass search-icon"></span>
+                <input type="text" class="search-input" placeholder="Search projects..." />
+            </div>
+            <div class="top-bar-actions">
+                <button class="icon-button" title="Notifications">
+                    <span class="oi oi-bell"></span>
+                </button>
+                <button class="icon-button" title="Help">
+                    <span class="oi oi-question-mark"></span>
+                </button>
+            </div>
+        </div>
+
+        <article class="content">
+            @Body
+        </article>
+    </main>
+</div>
