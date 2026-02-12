@@ -144,3 +144,57 @@ This file is the authoritative decision ledger. All scope, architecture, and pro
 - Performance/load tests for large video files  
 - UI/Component tests for MAUI interface
 - Contract tests for external API integrations
+
+---
+
+### 2026-02-12: Windows Store Submission Process Documentation
+**By:** Mike
+**What:** Created comprehensive Windows Store submission guide (`docs/WINDOWS-STORE-SUBMISSION.md`) covering prerequisites, packaging, submission, certification, and post-launch processes. Updated CI-CD documentation to reference the guide.
+**Why:** The project is ready for Store submission, but developers lack clear guidance on the complex, multi-step process. Documenting prevents mistakes, speeds up future submissions, and provides reference material for handling rejections and updates.
+
+**Key Decisions:**
+
+1. **Manual submission approach** (current)
+   - Developers create releases via git tags
+   - GitHub Actions builds MSIX automatically
+   - Developers manually upload to Partner Center
+   - Rationale: Full control over timing, can verify MSIX before submission, easier to handle rejection/resubmit cycles
+
+2. **Comprehensive prerequisite documentation**
+   - Documented developer account setup, app reservation, age ratings questionnaire, privacy policy requirements
+   - Included asset dimensions and creation guidelines
+   - Provided certificate validation checklist
+   - Rationale: Most Store rejections come from incomplete prerequisites; upfront documentation prevents failures
+
+3. **Detailed certification issue troubleshooting**
+   - Documented common rejection reasons and solutions
+   - Included code/manifest examples for common fixes
+   - Explained certification timeline and expected durations
+   - Rationale: Developers need to quickly diagnose and fix submission failures
+
+4. **Optional automated submission path**
+   - Documented Azure AD service principal approach for future Store API integration
+   - Not yet implemented due to complexity and risk
+   - Provided as reference for future enhancement
+   - Rationale: Manual approach sufficient for current needs; automation can be added later with lower risk
+
+5. **Post-submission monitoring guidance**
+   - Included Analytics monitoring in Partner Center
+   - Provided crash reporting setup (Application Insights) as optional future enhancement
+   - Documented update process for published apps
+   - Rationale: Post-launch monitoring ensures app health and user satisfaction
+
+**Files Created/Modified:**
+- `docs/WINDOWS-STORE-SUBMISSION.md` (new): 25,920 characters, 500+ line comprehensive guide
+- `docs/CI-CD.md`: Updated with Store submission section and link to detailed guide
+
+**Related Infrastructure:**
+- Existing workflow: `.github/workflows/release.yml` already packages MSIX correctly
+- Required secrets already documented: `WINDOWS_CERTIFICATE_BASE64`, `CERTIFICATE_PASSWORD`
+- MSIX validation via automated GitHub Actions tests
+
+**Future Enhancements:**
+- Integrate Store Submission API for automated uploads (requires Azure AD setup)
+- Add Application Insights telemetry for crash reporting
+- Automated Store version numbering from git tags
+- Scheduled Store health monitoring (analytics dashboard)

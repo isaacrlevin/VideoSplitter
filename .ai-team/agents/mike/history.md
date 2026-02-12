@@ -66,3 +66,14 @@
 - **Artifact retention**: Tiered retention (7/14/90 days) based on artifact importance
 - **Build caching**: Not yet implemented but documented for future optimization
 - **Parallel testing**: Not needed yet (tests are fast), but ready for future scaling
+
+### Windows Store Submission Process
+- **Comprehensive guide created**: `docs/WINDOWS-STORE-SUBMISSION.md` covers full lifecycle from prerequisites through post-submission
+- **Store prerequisites**: Must complete developer account setup, app reservation, age ratings, and privacy policy before submission
+- **MSIX packaging**: Store packages require code signing, self-contained dependencies, and strict manifest validation
+- **Asset requirements**: Store listings require logos, screenshots, promotional images in specific dimensions
+- **Certification timeline**: Typical 24-48 hours; automated validation 1-4 hours, manual review 1-3 days
+- **Common issues**: Most certification failures are due to unsigned packages, missing privacy policy, or manifest mismatches
+- **Manual vs automated**: Current approach is manual submission (download MSIX, upload to Partner Center) for full control; API-based automation documented for future
+- **Update strategy**: Each Store update requires version increment (MAJOR.MINOR.PATCH.BUILD); can resubmit unlimited times if rejected
+- **Analytics integration**: Store analytics available in Partner Center; crash reporting can be added via Application Insights (not yet implemented)

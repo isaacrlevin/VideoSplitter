@@ -165,7 +165,18 @@ The release workflow creates an MSIX package suitable for Windows Store submissi
 - Digital signature (if certificate configured)
 - Version metadata
 
-### Manual Store Submission
+### Store Submission Process
+
+For complete instructions on submitting to the Windows Store, see **[WINDOWS-STORE-SUBMISSION.md](./WINDOWS-STORE-SUBMISSION.md)**
+
+This guide covers:
+- **Prerequisites**: Developer account, app registration, ratings, privacy policy
+- **Packaging**: Store-specific requirements, assets, validation
+- **Submission**: Step-by-step Partner Center process
+- **Certification**: Timeline, common issues, rejection handling
+- **Post-submission**: Analytics, updates, crash reporting
+
+### Quick Start: Manual Store Submission
 
 1. **Download MSIX Package**
    - Go to GitHub Actions → Release Build → Latest run
