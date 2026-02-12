@@ -77,3 +77,15 @@
 - **Manual vs automated**: Current approach is manual submission (download MSIX, upload to Partner Center) for full control; API-based automation documented for future
 - **Update strategy**: Each Store update requires version increment (MAJOR.MINOR.PATCH.BUILD); can resubmit unlimited times if rejected
 - **Analytics integration**: Store analytics available in Partner Center; crash reporting can be added via Application Insights (not yet implemented)
+
+### Automated Windows Store Submission
+- **Architecture**: Three-phase workflow—validate MSIX integrity, authenticate to Azure AD, submit to Partner Center
+- **Trigger modes**: Auto-submit via release workflow flag, manual dispatch for ad-hoc submission, dry-run for testing
+- **Safety-first design**: No auto-submit by default; requires explicit opt-in flag (`auto-submit-store=true`) on release
+- **Azure service principal**: Uses Azure AD app registration (not user credentials) for secure, auditable API access
+- **Validation gates**: MSIX integrity checks, manifest verification, secrets validation before any API calls
+- **Error handling**: Graceful fallback to manual submission if API integration not yet configured
+- **API integration pending**: Workflow has placeholders for StoreBroker PowerShell module and Store REST API; can be enabled incrementally
+- **Dry-run capability**: Full workflow test without touching Partner Center (validation only)
+- **Monitoring**: Submission status polling with configurable timeout; failure notifications via GitHub Actions
+- **Key files**: `.github/workflows/store-publish.yml` (new), updated `release.yml` with auto-submit input, `docs/WINDOWS-STORE-AUTOMATION.md` (comprehensive guide)

@@ -1,0 +1,334 @@
+name: Publish to Windows Store
+
+on:
+  workflow_run:
+    workflows: ['Release Build']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      artifact-run-id:
+        description: 'GitHub Actions run ID containing the MSIX artifact'
+        required: true
+        type: string
+      dry-run:
+        description: 'Run in dry-run mode (validate only, no actual submission)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  STORE_APP_ID: ${{ secrets.STORE_APP_ID }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  STORE_SUBMISSION_TIMEOUT: 3600  # 1 hour timeout for certification monitoring
+
+jobs:
+  validate-and-submit:
+    name: Validate and Submit to Store
+    runs-on: windows-latest
+    
+    # Only proceed if release workflow succeeded or manual dispatch
+    if: |
+      github.event_name == 'workflow_dispatch' || 
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    
+    outputs:
+      submission-id: ${{ steps.submit.outputs.submission-id }}
+      submission-status: ${{ steps.submit.outputs.status }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Determine artifact run ID
+      id: run-id
+      shell: pwsh
+      run: |
+        $runId = "${{ github.event.workflow_run.id }}"
+        if ([string]::IsNullOrEmpty($runId)) {
+          $runId = "${{ github.event.inputs.artifact-run-id }}"
+        }
+        echo "RUN_ID=$runId" >> $env:GITHUB_OUTPUT
+        Write-Host "Using release workflow run ID: $runId"
+    
+    - name: Download MSIX artifact
+      uses: dawidd6/action-download-artifact@v3
+      with:
+        run_id: ${{ steps.run-id.outputs.RUN_ID }}
+        name_is_regexp: true
+        name: 'msix-package-.*'
+        path: ./artifacts
+    
+    - name: Find MSIX file
+      id: msix
+      shell: pwsh
+      run: |
+        $msixFile = Get-ChildItem -Path "./artifacts" -Filter "*.msix" -Recurse | Select-Object -First 1
+        if ($null -eq $msixFile) {
+          Write-Error "No MSIX file found in artifacts"
+          exit 1
+        }
+        $msixPath = $msixFile.FullName
+        echo "MSIX_PATH=$msixPath" >> $env:GITHUB_OUTPUT
+        echo "MSIX_FILE=$($msixFile.Name)" >> $env:GITHUB_OUTPUT
+        Write-Host "Found MSIX: $($msixFile.Name)"
+    
+    - name: Validate MSIX package
+      id: validate
+      shell: pwsh
+      run: |
+        $msixPath = "${{ steps.msix.outputs.MSIX_PATH }}"
+        
+        Write-Host "Validating MSIX package: $msixPath"
+        
+        # Check file exists and size
+        if (-not (Test-Path $msixPath)) {
+          Write-Error "MSIX file not found: $msixPath"
+          exit 1
+        }
+        
+        $file = Get-Item $msixPath
+        $sizeGB = [math]::Round($file.Length / 1GB, 2)
+        Write-Host "Package size: $sizeGB GB"
+        
+        # Verify it's a valid ZIP (MSIX is ZIP-based)
+        try {
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::OpenRead($msixPath) | ForEach-Object {
+            $_.Dispose()
+          }
+          Write-Host "✓ MSIX package integrity verified"
+          echo "VALID=true" >> $env:GITHUB_OUTPUT
+        } catch {
+          Write-Error "Invalid MSIX package: $_"
+          echo "VALID=false" >> $env:GITHUB_OUTPUT
+          exit 1
+        }
+        
+        # Check for required manifest file
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $zip = [System.IO.Compression.ZipFile]::OpenRead($msixPath)
+        $hasManifest = $zip.Entries | Where-Object { $_.Name -eq "AppxManifest.xml" }
+        $zip.Dispose()
+        
+        if ($null -eq $hasManifest) {
+          Write-Error "MSIX missing AppxManifest.xml"
+          exit 1
+        }
+        Write-Host "✓ AppxManifest.xml found"
+    
+    - name: Setup Azure credentials
+      if: env.AZURE_TENANT_ID != '' && env.AZURE_CLIENT_ID != ''
+      shell: pwsh
+      run: |
+        # Verify required secrets are configured
+        if ([string]::IsNullOrEmpty("${{ env.AZURE_TENANT_ID }}")) {
+          Write-Error "AZURE_TENANT_ID secret not configured"
+          exit 1
+        }
+        if ([string]::IsNullOrEmpty("${{ env.AZURE_CLIENT_ID }}")) {
+          Write-Error "AZURE_CLIENT_ID secret not configured"
+          exit 1
+        }
+        if ([string]::IsNullOrEmpty("${{ secrets.AZURE_CLIENT_SECRET }}")) {
+          Write-Error "AZURE_CLIENT_SECRET secret not configured"
+          exit 1
+        }
+        if ([string]::IsNullOrEmpty("${{ env.STORE_APP_ID }}")) {
+          Write-Error "STORE_APP_ID secret not configured"
+          exit 1
+        }
+        Write-Host "✓ All required secrets are configured"
+    
+    - name: Install StoreBroker module
+      if: env.AZURE_TENANT_ID != '' && env.AZURE_CLIENT_ID != ''
+      shell: pwsh
+      run: |
+        Write-Host "Installing StoreBroker module..."
+        Install-Module -Name StoreBroker -Force -Scope CurrentUser -Verbose
+        Write-Host "✓ StoreBroker module installed"
+    
+    - name: Authenticate with Azure
+      id: auth
+      if: env.AZURE_TENANT_ID != '' && env.AZURE_CLIENT_ID != ''
+      shell: pwsh
+      run: |
+        Write-Host "Authenticating with Azure AD..."
+        
+        $tenantId = "${{ env.AZURE_TENANT_ID }}"
+        $clientId = "${{ env.AZURE_CLIENT_ID }}"
+        $clientSecret = ConvertTo-SecureString "${{ secrets.AZURE_CLIENT_SECRET }}" -AsPlainText -Force
+        
+        $credential = New-Object System.Management.Automation.PSCredential($clientId, $clientSecret)
+        
+        try {
+          Connect-AzAccount -ServicePrincipal -Credential $credential -TenantId $tenantId -ErrorAction Stop | Out-Null
+          Write-Host "✓ Successfully authenticated with Azure AD"
+          echo "AUTH_SUCCESS=true" >> $env:GITHUB_OUTPUT
+        } catch {
+          Write-Error "Failed to authenticate with Azure AD: $_"
+          echo "AUTH_SUCCESS=false" >> $env:GITHUB_OUTPUT
+          exit 1
+        }
+    
+    - name: Submit to Store (Dry-run)
+      id: submit-dryrun
+      if: github.event.inputs.dry-run == 'true'
+      shell: pwsh
+      run: |
+        Write-Host "🔵 DRY-RUN MODE: Validation only, no actual submission"
+        Write-Host ""
+        Write-Host "What would be submitted:"
+        Write-Host "  - MSIX Package: ${{ steps.msix.outputs.MSIX_FILE }}"
+        Write-Host "  - App ID: ${{ env.STORE_APP_ID }}"
+        Write-Host "  - Azure Tenant: ${{ env.AZURE_TENANT_ID }}"
+        Write-Host ""
+        Write-Host "✓ Package validation passed"
+        Write-Host "✓ All prerequisites verified"
+        Write-Host ""
+        Write-Host "To perform actual submission, run without dry-run flag"
+        echo "submission-id=dry-run-$(Get-Date -Format 'yyyyMMddHHmmss')" >> $env:GITHUB_OUTPUT
+        echo "status=dry-run-validated" >> $env:GITHUB_OUTPUT
+    
+    - name: Submit to Store (Production)
+      id: submit
+      if: github.event.inputs.dry-run != 'true' && env.AZURE_TENANT_ID != '' && env.AZURE_CLIENT_ID != ''
+      shell: pwsh
+      run: |
+        Write-Host "📦 Submitting package to Windows Store..."
+        
+        # This is a template for actual Store API integration
+        # Uncomment when StoreBroker or Store API client is integrated
+        
+        <#
+        $appId = "${{ env.STORE_APP_ID }}"
+        $msixPath = "${{ steps.msix.outputs.MSIX_PATH }}"
+        
+        try {
+          # Upload package to Partner Center
+          $submission = New-SubmissionPackage -AppId $appId -PackagePath $msixPath
+          $submissionId = $submission.Id
+          
+          Write-Host "✓ Package uploaded successfully"
+          Write-Host "  Submission ID: $submissionId"
+          
+          # Commit submission (marks as ready for certification)
+          Commit-Submission -AppId $appId -SubmissionId $submissionId
+          
+          Write-Host "✓ Submission committed to certification queue"
+          
+          echo "submission-id=$submissionId" >> $env:GITHUB_OUTPUT
+          echo "status=submitted" >> $env:GITHUB_OUTPUT
+        } catch {
+          Write-Error "Failed to submit to Store: $_"
+          exit 1
+        }
+        #>
+        
+        # Placeholder: Store API integration pending
+        Write-Host "⚠️  Store API integration not yet configured"
+        Write-Host ""
+        Write-Host "To enable automated submission:"
+        Write-Host "1. Configure Azure service principal (see docs)"
+        Write-Host "2. Set AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET secrets"
+        Write-Host "3. Set STORE_APP_ID secret with your Partner Center app ID"
+        Write-Host "4. Uncomment StoreBroker integration above"
+        Write-Host ""
+        Write-Host "Until then, manual submission via Partner Center is required."
+        Write-Host ""
+        Write-Host "MSIX package ready for manual submission:"
+        Write-Host "  ${{ steps.msix.outputs.MSIX_PATH }}"
+        
+        echo "submission-id=manual-submission-pending" >> $env:GITHUB_OUTPUT
+        echo "status=ready-for-manual-submission" >> $env:GITHUB_OUTPUT
+    
+    - name: Monitor submission (if auto-submitted)
+      if: steps.submit.outputs.status == 'submitted'
+      shell: pwsh
+      timeout-minutes: 60
+      run: |
+        Write-Host "⏱️  Monitoring submission status..."
+        
+        $submissionId = "${{ steps.submit.outputs.submission-id }}"
+        $appId = "${{ env.STORE_APP_ID }}"
+        $startTime = Get-Date
+        $timeout = 3600  # 1 hour
+        
+        <#
+        while ((Get-Date) - $startTime -lt [TimeSpan]::FromSeconds($timeout)) {
+          $status = Get-SubmissionStatus -AppId $appId -SubmissionId $submissionId
+          
+          Write-Host "Current status: $($status.State)"
+          
+          if ($status.State -eq "Approved") {
+            Write-Host "✅ Submission APPROVED - ready to publish"
+            exit 0
+          } elseif ($status.State -eq "Failed" -or $status.State -eq "Rejected") {
+            Write-Host "❌ Submission FAILED"
+            Write-Host "Details: $($status.Details)"
+            # Don't exit with error - we want to report but allow continuation
+            exit 0
+          } elseif ($status.State -eq "Processing") {
+            Write-Host "Processing... (elapsed: $(([datetime]::Now - $startTime).Minutes) min)"
+            Start-Sleep -Seconds 60
+          } else {
+            Write-Host "Status: $($status.State)"
+            Start-Sleep -Seconds 30
+          }
+        }
+        
+        Write-Host "⚠️  Submission monitoring timeout - please check Partner Center"
+        #>
+        
+        Write-Host "Submission monitoring configured but requires Store API setup"
+    
+    - name: Report submission status
+      if: always()
+      shell: pwsh
+      run: |
+        $status = "${{ steps.submit.outputs.status }}"
+        Write-Host "=========================================="
+        Write-Host "Submission Status Report"
+        Write-Host "=========================================="
+        Write-Host "Status: $status"
+        Write-Host "MSIX File: ${{ steps.msix.outputs.MSIX_FILE }}"
+        Write-Host "Validation: ${{ steps.validate.outputs.VALID }}"
+        Write-Host ""
+        
+        if ($status -eq "dry-run-validated") {
+          Write-Host "✅ Dry-run validation PASSED"
+          Write-Host "Run without dry-run to perform actual submission"
+        } elseif ($status -eq "submitted") {
+          Write-Host "✅ Submission SUCCESSFUL"
+          Write-Host "Submission ID: ${{ steps.submit.outputs.submission-id }}"
+          Write-Host "Check Partner Center for certification status"
+        } elseif ($status -eq "ready-for-manual-submission") {
+          Write-Host "⚠️  READY FOR MANUAL SUBMISSION"
+          Write-Host "Download the MSIX and submit via Partner Center:"
+          Write-Host "  App: ${{ env.STORE_APP_ID }}"
+          Write-Host "  File: ${{ steps.msix.outputs.MSIX_FILE }}"
+        }
+
+  notify-on-failure:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    needs: validate-and-submit
+    if: failure()
+    steps:
+    - name: Create failure summary
+      run: |
+        echo "## ❌ Windows Store Submission Failed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Action:** Windows Store Submission" >> $GITHUB_STEP_SUMMARY
+        echo "**Status:** Failed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
+        echo "1. Check the workflow logs for error details" >> $GITHUB_STEP_SUMMARY
+        echo "2. Verify all required secrets are configured:" >> $GITHUB_STEP_SUMMARY
+        echo "   - AZURE_TENANT_ID" >> $GITHUB_STEP_SUMMARY
+        echo "   - AZURE_CLIENT_ID" >> $GITHUB_STEP_SUMMARY
+        echo "   - AZURE_CLIENT_SECRET" >> $GITHUB_STEP_SUMMARY
+        echo "   - STORE_APP_ID" >> $GITHUB_STEP_SUMMARY
+        echo "3. If using manual submission, download the MSIX from the release build" >> $GITHUB_STEP_SUMMARY
+        echo "4. Check [Submission Guide](../docs/WINDOWS-STORE-AUTOMATION.md) for setup details" >> $GITHUB_STEP_SUMMARY

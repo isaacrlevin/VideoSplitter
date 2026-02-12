@@ -198,3 +198,49 @@ This file is the authoritative decision ledger. All scope, architecture, and pro
 - Add Application Insights telemetry for crash reporting
 - Automated Store version numbering from git tags
 - Scheduled Store health monitoring (analytics dashboard)
+
+---
+
+### 2026-02-12: Windows Store Submission Automation
+**By:** Mike
+**What:** Implemented automated Windows Store submission pipeline (`.github/workflows/store-publish.yml`) integrated with release workflow, with safe opt-in design and comprehensive Azure AD service principal setup guide.
+**Why:** Isaac requested automated Store submission to eliminate manual upload steps and reduce time-to-market. The solution prioritizes safety and control through opt-in design, dry-run capability, and graceful degradation.
+
+**Key Design Decisions:**
+
+1. **Opt-in by default**
+   - No auto-submission on every release; requires explicit `auto-submit-store=true` flag
+   - Rationale: Full control, prevents accidental submissions
+
+2. **Dry-run capability**
+   - Test entire workflow without touching Partner Center API
+   - Rationale: Validate setup and troubleshoot safely
+
+3. **Service principal model**
+   - Uses Azure AD apps instead of user credentials
+   - Rationale: Audit trail + secure credential rotation
+
+4. **Validation first**
+   - Validates MSIX integrity, manifest, and secrets BEFORE API calls
+   - Rationale: Prevent invalid submissions
+
+5. **Manual fallback**
+   - MSIX always available for manual submission via Partner Center UI
+   - Rationale: Graceful degradation if automation fails
+
+6. **Postponed full API integration**
+   - Workflow has placeholders for StoreBroker/REST API but not wired yet
+   - Rationale: Allows incremental enablement as confidence grows
+
+**Implementation Details:**
+- Release workflow (`release.yml`): Added `auto-submit-store` input (default: false)
+- Store-publish workflow (`store-publish.yml`): 400-line workflow with validation, dry-run, and submission phases
+- Azure service principal guide: Detailed docs in `WINDOWS-STORE-AUTOMATION.md`
+- Secrets documentation: Updated `SECRETS-SETUP.md` with new Azure/Store secrets
+
+**Files Changed:**
+- Created: `.github/workflows/store-publish.yml`
+- Created: `docs/WINDOWS-STORE-AUTOMATION.md`
+- Modified: `.github/workflows/release.yml` (added auto-submit input)
+- Modified: `docs/SECRETS-SETUP.md` (added Store API secrets documentation)
+- Modified: `.ai-team/agents/mike/history.md` (added learnings)

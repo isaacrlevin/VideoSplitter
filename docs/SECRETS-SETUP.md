@@ -11,6 +11,21 @@ These secrets are needed to create signed MSIX packages for Windows Store submis
 | `WINDOWS_CERTIFICATE_BASE64` | Code signing certificate in Base64 format | See [CERTIFICATE-SETUP.md](CERTIFICATE-SETUP.md) | Release workflow |
 | `CERTIFICATE_PASSWORD` | Password for the PFX certificate | Password used when creating/exporting the certificate | Release workflow |
 
+## Required for Automated Store Submission
+
+These secrets enable the Store publication workflow to automatically submit to Partner Center:
+
+| Secret Name | Purpose | How to Obtain | Required For |
+|------------|---------|---------------|--------------|
+| `AZURE_TENANT_ID` | Azure AD tenant ID | Azure Portal → App registrations → Directory ID | store-publish workflow |
+| `AZURE_CLIENT_ID` | Azure AD application ID | Azure Portal → App registrations → Application ID | store-publish workflow |
+| `AZURE_CLIENT_SECRET` | Azure AD client secret | Azure Portal → App registrations → Certificates & secrets | store-publish workflow |
+| `STORE_APP_ID` | Windows Store app ID | Partner Center → App overview → App identity → Product ID | store-publish workflow |
+
+**Note**: These are only required if you want automated Store submission. Without them, the workflow will validate packages but not submit them (you can manually submit via Partner Center).
+
+See [WINDOWS-STORE-AUTOMATION.md](./WINDOWS-STORE-AUTOMATION.md) for detailed setup instructions.
+
 ## Optional Secrets
 
 These secrets enhance the pipeline but are not required:
@@ -124,5 +139,5 @@ As a maintainer with secret management access:
 ## Related Documentation
 
 - [CI/CD Pipeline Overview](CI-CD.md)
-- [Certificate Setup Guide](CERTIFICATE-SETUP.md)
+- [Windows Store Automated Submission](WINDOWS-STORE-AUTOMATION.md)
 - [GitHub Encrypted Secrets Documentation](https://docs.github.com/en/actions/security-guides/encrypted-secrets)
