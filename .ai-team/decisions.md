@@ -19,6 +19,68 @@ This file is the authoritative decision ledger. All scope, architecture, and pro
 
 ---
 
+### 2026-02-11: CI/CD Pipeline Implementation for Windows Store Publishing
+**By:** Mike  
+**What:** Implemented three-tier GitHub Actions pipeline (PR validation, CI, Release) with MSIX packaging for Windows Store submission  
+**Why:** Project needed automated build, test, and release infrastructure to ensure quality and streamline Windows Store publishing
+
+**Key Decisions:**
+
+1. **Three-Tier Workflow Strategy**
+   - PR validation: Fast feedback (build + test only, ~5-8min)
+   - CI builds: Main branch validation with coverage and artifacts
+   - Release: Full MSIX packaging with code signing
+   - Rationale: Balance speed (PRs), thoroughness (CI), and release readiness
+
+2. **Version Management via Git Tags**
+   - Git tags (v*.*.*) as source of truth for releases
+   - Automatic release trigger on tag push
+   - Manual workflow_dispatch as fallback
+   - Rationale: Git tags are immutable, traceable, and follow industry standard
+
+3. **Code Signing Approach**
+   - Certificate stored as Base64 in GitHub Secrets
+   - Decoded at build time, used for signing, cleaned up after
+   - Conditional: builds succeed without certificate (dev), sign when available
+   - Rationale: Security (no cert in repo), flexibility (works for contributors)
+
+4. **Test Execution Strategy**
+   - All 43 tests run on every build (PR, CI, Release)
+   - No categorization/filtering needed yet (tests complete in ~1 second)
+   - TRX reports with visual test reporter in Actions UI
+   - Rationale: Test suite is fast enough for comprehensive execution
+
+5. **MSIX Package Generation**
+   - WindowsPackageType=MSIX only in release workflow
+   - Self-contained packages with all dependencies
+   - Draft GitHub releases for manual review before publishing
+   - Rationale: Regular builds faster without packaging, releases ready for Store
+
+6. **Solution File Addition**
+   - Created VideoSplitter.sln to simplify build commands
+   - Includes both main project and test project
+   - Rationale: Simpler workflow syntax, standard .NET convention
+
+**Files Created:**
+- `.github/workflows/pr-validation.yml`
+- `.github/workflows/ci.yml`
+- `.github/workflows/release.yml`
+- `docs/CI-CD.md`
+- `VideoSplitter.sln`
+
+**Required Secrets:**
+- `WINDOWS_CERTIFICATE_BASE64`: PFX certificate for code signing
+- `CERTIFICATE_PASSWORD`: Certificate password
+- `CODECOV_TOKEN`: (Optional) For code coverage uploads
+
+**Future Enhancements:**
+- Automated Windows Store API submission
+- Build caching for faster restore
+- Multi-platform builds (iOS, Android, macOS)
+- Performance regression testing in CI
+
+---
+
 ### 2026-02-11: Comprehensive Test Strategy for VideoSplitter
 **By:** Hank  
 **What:** Defined multi-layered testing architecture including unit, integration, and E2E tests with clear frameworks, patterns, and coverage targets  
