@@ -1,9 +1,11 @@
-using YoutubeExplode;
-using YoutubeExplode.Videos.Streams;
-using YoutubeExplode.Exceptions;
 using FFMpegCore;
 using FFMpegCore.Enums;
 using FFMpegCore.Exceptions;
+using System.Diagnostics;
+using System.Text;
+using YoutubeExplode;
+using YoutubeExplode.Exceptions;
+using YoutubeExplode.Videos.Streams;
 
 namespace VideoSplitter.Services;
 
@@ -45,10 +47,10 @@ public class VideoService : IVideoService
 
             using var process = new System.Diagnostics.Process { StartInfo = processInfo };
             process.Start();
-            
+
             var output = await process.StandardOutput.ReadToEndAsync();
             var error = await process.StandardError.ReadToEndAsync();
-            
+
             await process.WaitForExitAsync();
 
             if (process.ExitCode == 0 && !string.IsNullOrEmpty(output))
@@ -81,26 +83,52 @@ public class VideoService : IVideoService
     }
 
     public async Task<(bool Success, string? FilePath, string? Error)> DownloadYouTubeVideoAsync(
-        string youTubeUrl, 
-        string outputPath, 
+        string youTubeUrl,
+        string outputPath,
+        IProgress<double>? progress = null)
+    {
+        // Validate YouTube URL
+        if (!IsValidYouTubeUrl(youTubeUrl))
+        {
+            return (false, null, "Invalid YouTube URL format");
+        }
+
+        // Try YouTubeExplode first
+        try
+        {
+            var result = await DownloadWithYouTubeExplodeAsync(youTubeUrl, outputPath, progress);
+            if (result.Success)
+            {
+                return result;
+            }
+
+            // If YouTubeExplode failed, try yt-dlp fallback
+            Console.WriteLine($"YouTubeExplode failed: {result.Error}. Attempting yt-dlp fallback...");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"YouTubeExplode error: {ex.Message}. Attempting yt-dlp fallback...");
+        }
+
+        // Fallback to yt-dlp
+        return await DownloadWithYtDlpFallbackAsync(youTubeUrl, outputPath);
+    }
+
+    private async Task<(bool Success, string? FilePath, string? Error)> DownloadWithYouTubeExplodeAsync(
+        string youTubeUrl,
+        string outputPath,
         IProgress<double>? progress = null)
     {
         try
         {
-            // Validate YouTube URL
-            if (!IsValidYouTubeUrl(youTubeUrl))
-            {
-                return (false, null, "Invalid YouTube URL format");
-            }
-
             // Get video information
             var video = await _youtubeClient.Videos.GetAsync(youTubeUrl);
-            
+
             // Get stream manifest with retry logic for cipher issues
             StreamManifest? streamManifest = null;
             int maxRetries = 3;
             int retryCount = 0;
-            
+
             while (retryCount < maxRetries)
             {
                 try
@@ -112,14 +140,14 @@ public class VideoService : IVideoService
                 {
                     return (false, null, $"Video is not available: {ex.Message}");
                 }
-                catch (Exception ex) when (ex.Message.Contains("cipher") || ex.Message.Contains("decrypt"))
+                catch (Exception ex) when (ex.Message.Contains("cipher") || ex.Message.Contains("decrypt"))                
                 {
                     retryCount++;
                     if (retryCount >= maxRetries)
                     {
                         return (false, null, "Unable to download video due to YouTube protection measures. This video may not be available for download, or YouTube has updated their security. Please try again later or use a different video.");
                     }
-                    
+
                     // Wait before retry
                     await Task.Delay(1000 * retryCount);
                     continue;
@@ -133,7 +161,7 @@ public class VideoService : IVideoService
 
             // Try different stream types in order of preference
             IStreamInfo? streamInfo = null;
-            
+
             // First try: Best quality muxed MP4 streams
             streamInfo = streamManifest.GetMuxedStreams()
                 .Where(s => s.Container == Container.Mp4)
@@ -208,13 +236,51 @@ public class VideoService : IVideoService
         {
             // Log the full exception for debugging
             Console.WriteLine($"YouTube download error: {ex}");
-            
+
             if (ex.Message.Contains("cipher") || ex.Message.Contains("decrypt"))
             {
                 return (false, null, "Unable to download video due to YouTube protection measures. This may be due to:\n- YouTube's anti-bot protection\n- Recent changes to YouTube's security\n- Video restrictions\n\nPlease try again later or use a different video.");
             }
-            
+
             return (false, null, $"Download failed: {ex.Message}");
+        }
+    }
+
+    private async Task<(bool Success, string? FilePath, string? Error)> DownloadWithYtDlpFallbackAsync(
+        string youTubeUrl,
+        string outputPath)
+    {
+        try
+        {
+            var outputDirectory = Path.GetDirectoryName(outputPath)!;
+            var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(outputPath);
+
+            // Use a default filename if not provided
+            if (string.IsNullOrWhiteSpace(fileNameWithoutExtension))
+            {
+                fileNameWithoutExtension = $"video_{Guid.NewGuid():N}";
+            }
+
+            Console.WriteLine("Attempting download with yt-dlp...");
+            var filePath = await DownloadVideoManuallyAsync(youTubeUrl, outputDirectory, fileNameWithoutExtension);
+
+            // Verify the downloaded file
+            if (!File.Exists(filePath) || new FileInfo(filePath).Length == 0)
+            {
+                return (false, null, "yt-dlp download completed but file is empty or missing");
+            }
+
+            Console.WriteLine($"yt-dlp download successful: {filePath}");
+            return (true, filePath, null);
+        }
+        catch (FileNotFoundException ex)
+        {
+            return (false, null, $"yt-dlp download failed: {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"yt-dlp fallback error: {ex}");
+            return (false, null, $"Both YouTubeExplode and yt-dlp failed. yt-dlp error: {ex.Message}");
         }
     }
 
@@ -243,11 +309,11 @@ public class VideoService : IVideoService
         // Remove invalid characters
         var invalidChars = Path.GetInvalidFileNameChars();
         var sanitized = string.Join("_", fileName.Split(invalidChars));
-        
+
         // Limit length
         if (sanitized.Length > 100)
             sanitized = sanitized.Substring(0, 100);
-            
+
         return string.IsNullOrWhiteSpace(sanitized) ? "video" : sanitized;
     }
 
@@ -335,11 +401,11 @@ public class VideoService : IVideoService
 
             // Use FFProbe to validate the video file structure
             var mediaInfo = await FFProbe.AnalyseAsync(filePath);
-            
+
             // Check if the file has video streams and valid duration
             var hasValidVideoStream = mediaInfo.VideoStreams.Any();
             var hasValidDuration = mediaInfo.Duration > TimeSpan.Zero;
-            
+
             if (!hasValidVideoStream)
             {
                 Console.WriteLine($"No valid video streams found in file: {filePath}");
@@ -387,7 +453,7 @@ public class VideoService : IVideoService
             // Get video duration to ensure we don't seek beyond the video length
             var mediaInfo = await FFProbe.AnalyseAsync(videoPath);
             var videoDuration = mediaInfo.Duration;
-            
+
             // Adjust position if it's beyond the video duration
             if (position >= videoDuration)
             {
@@ -396,8 +462,8 @@ public class VideoService : IVideoService
 
             // Use FFMpegCore to generate thumbnail with specific settings
             await FFMpeg.SnapshotAsync(
-                videoPath, 
-                thumbnailPath, 
+                videoPath,
+                thumbnailPath,
                 new System.Drawing.Size(480, 270), // 16:9 aspect ratio, reasonable size
                 position
             );
@@ -423,5 +489,72 @@ public class VideoService : IVideoService
         }
 
         return string.Empty;
+    }
+    public async Task<string> DownloadVideoManuallyAsync(
+          string videoUrl,
+          string outputDirectory,
+          string fileNameWithoutExtension)
+    {
+        if (string.IsNullOrWhiteSpace(videoUrl))
+            throw new ArgumentException("Video URL is required", nameof(videoUrl));
+
+        Directory.CreateDirectory(outputDirectory);
+
+        var outputTemplate = Path.Combine(
+            outputDirectory,
+            $"{fileNameWithoutExtension}.%(ext)s");
+
+        var args =
+            $"-f \"bv*[height<=1080]+ba/b\" " +
+            $"--merge-output-format mp4 " +
+            $"-o \"{outputTemplate}\" " +
+            $"\"{videoUrl}\"";
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "yt-dlp", // or full path to yt-dlp.exe
+            Arguments = args,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        var output = new StringBuilder();
+        var error = new StringBuilder();
+
+        using var process = new Process { StartInfo = startInfo };
+
+        process.OutputDataReceived += (_, e) =>
+        {
+            if (!string.IsNullOrWhiteSpace(e.Data))
+                output.AppendLine(e.Data);
+        };
+
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (!string.IsNullOrWhiteSpace(e.Data))
+                error.AppendLine(e.Data);
+        };
+
+        process.Start();
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+
+        await process.WaitForExitAsync();
+
+        if (process.ExitCode != 0)
+            throw new Exception($"yt-dlp failed:\n{error}");
+
+        var finalFile = Path.Combine(
+            outputDirectory,
+            $"{fileNameWithoutExtension}.mp4");
+
+        if (!File.Exists(finalFile))
+            throw new FileNotFoundException(
+                "yt-dlp finished but output file was not found",
+                finalFile);
+
+        return finalFile;
     }
 }

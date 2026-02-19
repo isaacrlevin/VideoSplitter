@@ -255,15 +255,52 @@ public sealed class OAuthCallbackListener : IAsyncDisposable, IDisposable
         .icon { font-size: 4rem; margin-bottom: 1rem; }
         h1 { color: #22c55e; margin: 0 0 1rem 0; }
         p { color: #666; margin: 0; }
+        .countdown { color: #999; font-size: 0.9rem; margin-top: 1rem; }
+        .manual-close { display: none; color: #666; margin-top: 1rem; padding: 1rem; background: #f5f5f5; border-radius: 8px; }
     </style>
 </head>
 <body>
     <div class=""container"">
         <div class=""icon"">&#10004;</div>
         <h1>Authentication Successful!</h1>
-        <p>You can close this window and return to the application.</p>
+        <p>You can return to the application.</p>
+        <p class=""countdown"" id=""countdown"">This tab will close in <span id=""seconds"">5</span> seconds...</p>
+        <p class=""manual-close"" id=""manual"">Please close this tab manually.</p>
     </div>
-    <script>setTimeout(function() { window.close(); }, 3000);</script>
+    <script>
+        (function() {
+            var seconds = 5;
+            var countdownEl = document.getElementById('seconds');
+            var manualEl = document.getElementById('manual');
+            var countdownContainer = document.getElementById('countdown');
+            
+            var timer = setInterval(function() {
+                seconds--;
+                countdownEl.textContent = seconds;
+                if (seconds <= 0) {
+                    clearInterval(timer);
+                    tryClose();
+                }
+            }, 1000);
+            
+            function tryClose() {
+                // Attempt 1: Standard close
+                window.close();
+                
+                // Attempt 2: Open self and close (works in some browsers)
+                setTimeout(function() {
+                    window.open('', '_self', '');
+                    window.close();
+                }, 100);
+                
+                // If still open after attempts, show manual message
+                setTimeout(function() {
+                    countdownContainer.style.display = 'none';
+                    manualEl.style.display = 'block';
+                }, 500);
+            }
+        })();
+    </script>
 </body>
 </html>";
 
@@ -280,6 +317,8 @@ public sealed class OAuthCallbackListener : IAsyncDisposable, IDisposable
         h1 { color: #ef4444; margin: 0 0 1rem 0; }
         p { color: #666; margin: 0; }
         .error { color: #999; font-size: 0.9rem; margin-top: 1rem; }
+        .countdown { color: #999; font-size: 0.9rem; margin-top: 1rem; }
+        .manual-close { display: none; color: #666; margin-top: 1rem; padding: 1rem; background: #f5f5f5; border-radius: 8px; }
     </style>
 </head>
 <body>
@@ -288,7 +327,43 @@ public sealed class OAuthCallbackListener : IAsyncDisposable, IDisposable
         <h1>Authentication Failed</h1>
         <p>Something went wrong during authentication.</p>
         <p class=""error"">{{ERROR_MESSAGE}}</p>
+        <p class=""countdown"" id=""countdown"">This tab will close in <span id=""seconds"">5</span> seconds...</p>
+        <p class=""manual-close"" id=""manual"">Please close this tab manually and try again.</p>
     </div>
+    <script>
+        (function() {
+            var seconds = 5;
+            var countdownEl = document.getElementById('seconds');
+            var manualEl = document.getElementById('manual');
+            var countdownContainer = document.getElementById('countdown');
+            
+            var timer = setInterval(function() {
+                seconds--;
+                countdownEl.textContent = seconds;
+                if (seconds <= 0) {
+                    clearInterval(timer);
+                    tryClose();
+                }
+            }, 1000);
+            
+            function tryClose() {
+                // Attempt 1: Standard close
+                window.close();
+                
+                // Attempt 2: Open self and close (works in some browsers)
+                setTimeout(function() {
+                    window.open('', '_self', '');
+                    window.close();
+                }, 100);
+                
+                // If still open after attempts, show manual message
+                setTimeout(function() {
+                    countdownContainer.style.display = 'none';
+                    manualEl.style.display = 'block';
+                }, 500);
+            }
+        })();
+    </script>
 </body>
 </html>";
 

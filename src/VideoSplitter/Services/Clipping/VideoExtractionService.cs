@@ -1,5 +1,6 @@
 using FFMpegCore;
 using VideoSplitter.Models;
+using VideoSplitter.Services.TranscriptProviders;
 
 namespace VideoSplitter.Services;
 
@@ -50,6 +51,10 @@ public class VideoExtractionService : IVideoExtractionService
     private readonly IProjectService _projectService;
     private readonly IFileStreamService _fileStreamService;
     private readonly ISubtitleService _subtitleService;
+    private readonly IAudioExtractionService _audioExtractionService;
+    private readonly ITranscriptService _transcriptService;
+    private readonly ISettingsService _settingsService;
+    private readonly HttpClient _httpClient;
 
     // Standard vertical video resolution for TikTok/YouTube Shorts
     private const int VerticalWidth = 1080;
@@ -58,11 +63,19 @@ public class VideoExtractionService : IVideoExtractionService
     public VideoExtractionService(
         IProjectService projectService, 
         IFileStreamService fileStreamService,
-        ISubtitleService subtitleService)
+        ISubtitleService subtitleService,
+        IAudioExtractionService audioExtractionService,
+        ITranscriptService transcriptService,
+        ISettingsService settingsService,
+        HttpClient httpClient)
     {
         _projectService = projectService;
         _fileStreamService = fileStreamService;
         _subtitleService = subtitleService;
+        _audioExtractionService = audioExtractionService;
+        _transcriptService = transcriptService;
+        _settingsService = settingsService;
+        _httpClient = httpClient;
     }
 
     public Task<ExtractionResult> ExtractSegmentAsync(
@@ -81,7 +94,10 @@ public class VideoExtractionService : IVideoExtractionService
         SubtitleOptions? subtitleOptions,
         IProgress<double>? progress = null)
     {
-        string? clippedSrtPath = null;
+        string? tempVideoPath = null;
+        string? tempAudioPath = null;
+        string? tempTranscriptPath = null;
+        string? tempSrtPath = null;
         
         try
         {
@@ -120,64 +136,137 @@ public class VideoExtractionService : IVideoExtractionService
             var fileName = $"{sanitizedProjectName}-{segmentNumber}{suffix}.mp4";
             var outputPath = Path.Combine(clipsFolder, fileName);
 
-            // Prepare subtitle file if enabled
-            if (subtitleOptions?.Enabled == true && !string.IsNullOrEmpty(project.TranscriptPath))
+            // Step 1: Extract the segment WITHOUT subtitles
+            var duration = segment.EndTime - segment.StartTime;
+            
+            if (subtitleOptions?.Enabled == true)
             {
-                var srtPath = Path.ChangeExtension(project.TranscriptPath, ".srt");
+                // Create temporary video file (without subtitles)
+                tempVideoPath = Path.Combine(clipsFolder, $"{sanitizedProjectName}-{segmentNumber}-temp.mp4");
                 
-                // Check if SRT file exists, if not try to generate it from the transcript
-                if (!File.Exists(srtPath))
-                {
-                    var generateResult = await _subtitleService.GenerateSrtFromWhisperAsync(
-                        project.TranscriptPath, srtPath);
-                    
-                    if (!generateResult.Success)
+                progress?.Report(0.1);
+                await FFMpegArguments
+                    .FromFileInput(project.VideoPath, false, options => options
+                        .Seek(segment.StartTime))
+                    .OutputToFile(tempVideoPath, true, options =>
                     {
-                        return new ExtractionResult
-                        {
-                            Success = false,
-                            Error = $"Failed to generate SRT file: {generateResult.Error}"
-                        };
-                    }
-                }
-                
-                // Clip the SRT file to match the segment
-                clippedSrtPath = Path.Combine(clipsFolder, $"{sanitizedProjectName}-{segmentNumber}.srt");
-                var clipResult = await _subtitleService.ClipSrtAsync(
-                    srtPath,
-                    segment.StartTime,
-                    segment.EndTime,
-                    clippedSrtPath);
-                
-                if (!clipResult.Success)
+                        options
+                            .WithDuration(duration)
+                            .WithVideoCodec("libx264")
+                            .WithAudioCodec("aac")
+                            .WithFastStart();
+
+                        // Apply aspect ratio filters only (no subtitles)
+                        ApplyVideoFilters(options, aspectRatioMode, null, null);
+                    })
+                    .ProcessAsynchronously();
+
+                if (!File.Exists(tempVideoPath))
                 {
                     return new ExtractionResult
                     {
                         Success = false,
-                        Error = $"Failed to clip SRT file: {clipResult.Error}"
+                        Error = "Failed to create temporary clip file."
                     };
                 }
-            }
 
-            // Extract the segment using FFmpeg
-            var duration = segment.EndTime - segment.StartTime;
-            
-            await FFMpegArguments
-                .FromFileInput(project.VideoPath, false, options => options
-                    .Seek(segment.StartTime))
-                .OutputToFile(outputPath, true, options =>
+                progress?.Report(0.3);
+
+                // Step 2: Extract audio from the clipped video
+                tempAudioPath = Path.Combine(clipsFolder, $"{sanitizedProjectName}-{segmentNumber}-temp.wav");
+                var audioResult = await _audioExtractionService.ExtractAudioAsync(tempVideoPath, tempAudioPath);
+                
+                if (!audioResult.Success)
                 {
-                    options
-                        .WithDuration(duration)
-                        .WithVideoCodec("libx264")
-                        .WithAudioCodec("aac")
-                        .WithFastStart();
+                    return new ExtractionResult
+                    {
+                        Success = false,
+                        Error = $"Failed to extract audio from clip: {audioResult.Error}"
+                    };
+                }
 
-                    // Apply aspect ratio and subtitle filters
-                    ApplyVideoFilters(options, aspectRatioMode, subtitleOptions, clippedSrtPath);
-                })
-                .NotifyOnProgress(percent => progress?.Report(percent), duration)
-                .ProcessAsynchronously();
+                progress?.Report(0.5);
+
+                // Step 3: Generate transcript from the clipped audio
+                // The audio file is already in the correct format for transcription
+                tempTranscriptPath = Path.Combine(clipsFolder, $"{sanitizedProjectName}-{segmentNumber}-temp.txt");
+                
+                // Get current settings to use the configured transcript provider
+                var appSettings = await _settingsService.GetSettingsAsync();
+                
+                // Use the TranscriptService provider factory to get the configured provider
+                var transcriptProvider = new TranscriptProviderFactory(_httpClient)
+                    .GetProvider(appSettings.TranscriptProvider);
+                
+                var transcriptResult = await transcriptProvider.GenerateTranscriptAsync(
+                    tempAudioPath,       // Audio path (already in WAV 16KHz mono format)
+                    tempTranscriptPath,  // Output transcript path
+                    appSettings,
+                    new Progress<string>(msg => { /* Progress updates */ }));
+                
+                if (!transcriptResult.Success)
+                {
+                    return new ExtractionResult
+                    {
+                        Success = false,
+                        Error = $"Failed to generate transcript for clip: {transcriptResult.Error}"
+                    };
+                }
+
+                progress?.Report(0.7);
+
+                // Step 4: Generate SRT from the new transcript
+                tempSrtPath = Path.Combine(clipsFolder, $"{sanitizedProjectName}-{segmentNumber}-temp.srt");
+                var srtResult = await _subtitleService.GenerateSrtFromWhisperAsync(tempTranscriptPath, tempSrtPath);
+                
+                if (!srtResult.Success)
+                {
+                    return new ExtractionResult
+                    {
+                        Success = false,
+                        Error = $"Failed to generate SRT file: {srtResult.Error}"
+                    };
+                }
+
+                progress?.Report(0.8);
+
+                // Step 5: Burn subtitles onto the video
+                await FFMpegArguments
+                    .FromFileInput(tempVideoPath, false)
+                    .OutputToFile(outputPath, true, options =>
+                    {
+                        options
+                            .WithVideoCodec("libx264")
+                            .WithAudioCodec("copy")
+                            .WithFastStart();
+
+                        // Apply subtitle filter only
+                        ApplySubtitleFilter(options, subtitleOptions, tempSrtPath);
+                    })
+                    .ProcessAsynchronously();
+
+                progress?.Report(1.0);
+            }
+            else
+            {
+                // No subtitles needed - extract directly
+                await FFMpegArguments
+                    .FromFileInput(project.VideoPath, false, options => options
+                        .Seek(segment.StartTime))
+                    .OutputToFile(outputPath, true, options =>
+                    {
+                        options
+                            .WithDuration(duration)
+                            .WithVideoCodec("libx264")
+                            .WithAudioCodec("aac")
+                            .WithFastStart();
+
+                        // Apply aspect ratio filters only
+                        ApplyVideoFilters(options, aspectRatioMode, null, null);
+                    })
+                    .NotifyOnProgress(percent => progress?.Report(percent), duration)
+                    .ProcessAsynchronously();
+            }
 
             if (!File.Exists(outputPath))
             {
@@ -201,6 +290,29 @@ public class VideoExtractionService : IVideoExtractionService
                 Success = false,
                 Error = $"Extraction failed: {ex.Message}"
             };
+        }
+        finally
+        {
+            // Step 6: Clean up temporary files
+            CleanupTempFile(tempVideoPath);
+            CleanupTempFile(tempAudioPath);
+            CleanupTempFile(tempTranscriptPath);
+            CleanupTempFile(tempSrtPath);
+        }
+    }
+
+    private static void CleanupTempFile(string? filePath)
+    {
+        if (!string.IsNullOrEmpty(filePath) && File.Exists(filePath))
+        {
+            try
+            {
+                File.Delete(filePath);
+            }
+            catch
+            {
+                // Ignore cleanup errors
+            }
         }
     }
 
@@ -431,6 +543,34 @@ public class VideoExtractionService : IVideoExtractionService
                 // No filter needed for original without subtitles
                 break;
         }
+    }
+
+    /// <summary>
+    /// Applies subtitle filter to the video.
+    /// </summary>
+    private static void ApplySubtitleFilter(
+        FFMpegArgumentOptions options,
+        SubtitleOptions? subtitleOptions,
+        string? srtPath)
+    {
+        if (subtitleOptions?.Enabled != true || string.IsNullOrEmpty(srtPath) || !File.Exists(srtPath))
+            return;
+
+        // Check if SRT file has content (not empty)
+        var srtContent = File.ReadAllText(srtPath);
+        if (string.IsNullOrWhiteSpace(srtContent))
+            return;
+
+        // Escape special characters in file path for FFmpeg
+        var escapedPath = srtPath
+            .Replace("\\", "/")
+            .Replace(":", "\\:")
+            .Replace("'", "\\'");
+
+        var style = subtitleOptions.GetFFmpegStyleString();
+        var subtitleFilter = $"subtitles='{escapedPath}':force_style='{style}'";
+
+        options.WithCustomArgument($"-vf \"{subtitleFilter}\"");
     }
 
     private int GetSegmentNumber(Project project, Segment segment)

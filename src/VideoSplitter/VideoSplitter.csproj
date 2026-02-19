@@ -48,6 +48,17 @@
     </ItemGroup>
 
     <ItemGroup>
+      <MauiAsset Remove="Resources\Raw\yt-dlp.exe" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <Content Include="Resources\Raw\yt-dlp.exe">
+        <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      </Content>
+    </ItemGroup>
+
+	
+    <ItemGroup>
         <PackageReference Include="FFMpegCore" Version="5.4.0" />
         <PackageReference Include="Microsoft.CognitiveServices.Speech" Version="1.47.0" />
         <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.30" />
