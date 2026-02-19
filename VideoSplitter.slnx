@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/VideoSplitter.Tests/VideoSplitter.Tests.csproj" />
+    <Project Path="src/VideoSplitter/VideoSplitter.csproj" />
+  </Folder>
+</Solution>
