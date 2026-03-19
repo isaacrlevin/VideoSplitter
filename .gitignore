@@ -361,3 +361,9 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# Jekyll / GitHub Pages website build artifacts
+website/_site/
+website/.jekyll-cache/
+website/.bundle/
+website/vendor/
