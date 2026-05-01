@@ -158,10 +158,39 @@ else
                                     </div>
                                 }
 
+                                @if (!string.IsNullOrEmpty(project?.TranscriptPath))
+                                {
+                                    <div class="alert alert-info py-2">
+                                        <small>
+                                            <span class="oi oi-info me-1"></span>
+                                            <strong>Tip:</strong> Click the "Generate" button next to the title to automatically create an AI-powered title and description based on your video transcript.
+                                        </small>
+                                    </div>
+                                }
+
                                 <div class="mb-3">
                                     <label class="form-label fw-bold">Title *</label>
-                                    <input type="text" class="form-control" @bind="postTitle" maxlength="150" placeholder="Enter a catchy title..." />
+                                    <div class="input-group">
+                                        <input type="text" class="form-control" @bind="postTitle" maxlength="150" placeholder="Enter a catchy title..." />
+                                        <button type="button" class="btn btn-outline-primary" @onclick="GenerateSocialMediaContent" disabled="@(isGeneratingContent || isPublishing)">
+                                            @if (isGeneratingContent)
+                                            {
+                                                <span class="spinner-border spinner-border-sm" role="status"></span>
+                                            }
+                                            else
+                                            {
+                                                <span class="oi oi-cog"></span>
+                                            }
+                                            Generate
+                                        </button>
+                                    </div>
                                     <small class="text-muted">@postTitle.Length / 150 characters</small>
+                                    @if (!string.IsNullOrEmpty(contentGenerationError))
+                                    {
+                                        <div class="alert alert-warning mt-2 mb-0 py-1 px-2">
+                                            <small>@contentGenerationError</small>
+                                        </div>
+                                    }
                                 </div>
 
                                 <div class="mb-3">
@@ -470,6 +499,105 @@ else
                         <button type="button" class="btn btn-secondary" @onclick="CancelExtractSegment">Cancel</button>
                         <button type="button" class="btn btn-success" @onclick="ConfirmExtractSegment">
                             <span class="oi oi-media-play me-1"></span> Extract
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    <!-- Edit Segment Modal -->
+    @if (showEditSegmentModal && segmentForEdit != null && project != null)
+    {
+        <div class="modal show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">
+                            <span class="oi oi-pencil me-2"></span>
+                            Edit Segment Timestamps
+                        </h5>
+                        <button type="button" class="btn-close" @onclick="CancelEditSegment" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="alert alert-info mb-3">
+                            <span class="oi oi-info me-2"></span>
+                            <small>Use the preview player below to find exact timestamps. Play the segment to see your edits in action.</small>
+                        </div>
+
+                        <!-- Video Preview Player -->
+                        <div class="card mb-3">
+                            <div class="card-body p-2">
+                                <div class="position-relative" style="background-color: #000;">
+                                    <video id="editSegmentVideoPlayer" class="w-100" controls preload="metadata" style="max-height: 300px;">
+                                        <source src="@(File.Exists(project.PreviewVideoPath ?? "") ? FileStreamService.GetVideoUrl(project.PreviewVideoPath) : FileStreamService.GetVideoUrl(project.VideoPath))" 
+                                                type="@(File.Exists(project.PreviewVideoPath ?? "") ? GetVideoMimeType(project.PreviewVideoPath) : GetVideoMimeType(project.VideoPath))" />
+                                        Your browser does not support the video tag.
+                                    </video>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center mt-2">
+                                    <small class="text-muted">Preview Time: <span id="editSegmentCurrentTime">00:00</span></small>
+                                    <button type="button" class="btn btn-sm btn-outline-primary" @onclick="PreviewEditedSegment">
+                                        <span class="oi oi-media-play me-1"></span> Play Segment
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label fw-bold">Start Time</label>
+                                <div class="input-group input-group-sm">
+                                    <input type="text" class="form-control" @bind="editSegmentStartTime" 
+                                           placeholder="00:00:00" />
+                                    <button class="btn btn-outline-primary" @onclick="SetEditSegmentStart">
+                                        <span class="oi oi-media-step-backward"></span> Set
+                                    </button>
+                                </div>
+                                <small class="text-muted">Format: HH:MM:SS or MM:SS</small>
+                            </div>
+
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label fw-bold">End Time</label>
+                                <div class="input-group input-group-sm">
+                                    <input type="text" class="form-control" @bind="editSegmentEndTime" 
+                                           placeholder="00:00:00" />
+                                    <button class="btn btn-outline-primary" @onclick="SetEditSegmentEnd">
+                                        <span class="oi oi-media-step-forward"></span> Set
+                                    </button>
+                                </div>
+                                <small class="text-muted">Format: HH:MM:SS or MM:SS</small>
+                            </div>
+                        </div>
+
+                        @{
+                            var editStartTs = ParseTimeSpan(editSegmentStartTime);
+                            var editEndTs = ParseTimeSpan(editSegmentEndTime);
+                        }
+                        @if (editStartTs.HasValue && editEndTs.HasValue)
+                        {
+                            <div class="mb-3">
+                                <p class="text-muted small mb-1"><strong>Duration:</strong> @FormatDuration(editEndTs.Value - editStartTs.Value)</p>
+                                @if (editEndTs.Value <= editStartTs.Value)
+                                {
+                                    <p class="text-danger small mb-0">
+                                        <span class="oi oi-warning"></span> End time must be after start time
+                                    </p>
+                                }
+                                @if (project?.Duration.HasValue == true && editEndTs.Value > project.Duration.Value)
+                                {
+                                    <p class="text-danger small mb-0">
+                                        <span class="oi oi-warning"></span> End time exceeds video duration
+                                    </p>
+                                }
+                            </div>
+                        }
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" @onclick="CancelEditSegment">Cancel</button>
+                        <button type="button" class="btn btn-primary" @onclick="SaveEditSegment"
+                                disabled="@(!IsEditSegmentValid())">
+                            <span class="oi oi-check me-1"></span> Save Changes
                         </button>
                     </div>
                 </div>
@@ -851,7 +979,7 @@ else
                         </div>
                         
                         <video id="videoPlayer" class="w-100" controls preload="metadata" style="max-width: 600px;">
-                            <source src="@FileStreamService.GetVideoUrl(project.VideoPath)" type="@GetVideoMimeType(project.VideoPath)" />
+                            <source src="@(File.Exists(project.PreviewVideoPath ?? "") ? FileStreamService.GetVideoUrl(project.PreviewVideoPath) : FileStreamService.GetVideoUrl(project.VideoPath))" type="@(File.Exists(project.PreviewVideoPath ?? "") ? GetVideoMimeType(project.PreviewVideoPath) : GetVideoMimeType(project.VideoPath))" />
                             Your browser does not support the video tag.
                         </video>
                     </div>
@@ -1166,6 +1294,9 @@ else
                                             <button class="btn btn-outline-secondary btn-sm" @onclick="() => SeekToTime(segment.StartTime)">
                                                 <span class="oi oi-media-play"></span> Play
                                             </button>
+                                            <button class="btn btn-outline-info btn-sm" @onclick="() => ShowEditSegmentModal(segment)" title="Edit timestamps">
+                                                <span class="oi oi-pencil"></span> Edit
+                                            </button>
                                             @if (segment.Status == SegmentStatus.Generated)
                                             {
                                                 <button class="btn btn-outline-primary btn-sm" @onclick="() => UpdateSegmentStatus(segment, SegmentStatus.Approved)">
@@ -1330,6 +1461,16 @@ else
     private string publishError = "";
     private string publishSuccess = "";
     private string publishedUrl = "";
+
+    // AI content generation state
+    private bool isGeneratingContent = false;
+    private string contentGenerationError = "";
+
+    // Edit segment state
+    private bool showEditSegmentModal = false;
+    private Segment? segmentForEdit = null;
+    private string editSegmentStartTime = string.Empty;
+    private string editSegmentEndTime = string.Empty;
 
     protected override async Task OnInitializedAsync()
     {
@@ -2508,6 +2649,145 @@ else
         }
     }
 
+    // Edit Segment Methods
+    private async Task ShowEditSegmentModal(Segment segment)
+    {
+        segmentForEdit = segment;
+        editSegmentStartTime = FormatDuration(segment.StartTime);
+        editSegmentEndTime = FormatDuration(segment.EndTime);
+        showEditSegmentModal = true;
+        StateHasChanged();
+
+        // Wait for the modal to render, then initialize the video player
+        await Task.Delay(100);
+        await InitializeEditSegmentVideoPlayer();
+    }
+
+    private void CancelEditSegment()
+    {
+        showEditSegmentModal = false;
+        segmentForEdit = null;
+        editSegmentStartTime = string.Empty;
+        editSegmentEndTime = string.Empty;
+        StateHasChanged();
+    }
+
+    private async Task SetEditSegmentStart()
+    {
+        var currentTime = await JSRuntime.InvokeAsync<double>("getEditSegmentVideoTime");
+        editSegmentStartTime = FormatDuration(TimeSpan.FromSeconds(currentTime));
+        StateHasChanged();
+    }
+
+    private async Task SetEditSegmentEnd()
+    {
+        var currentTime = await JSRuntime.InvokeAsync<double>("getEditSegmentVideoTime");
+        editSegmentEndTime = FormatDuration(TimeSpan.FromSeconds(currentTime));
+        StateHasChanged();
+    }
+
+    private bool IsEditSegmentValid()
+    {
+        var startTs = ParseTimeSpan(editSegmentStartTime);
+        var endTs = ParseTimeSpan(editSegmentEndTime);
+
+        if (!startTs.HasValue || !endTs.HasValue)
+            return false;
+
+        if (endTs.Value <= startTs.Value)
+            return false;
+
+        if (project?.Duration.HasValue == true && endTs.Value > project.Duration.Value)
+            return false;
+
+        return true;
+    }
+
+    private async Task InitializeEditSegmentVideoPlayer()
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("initializeEditSegmentVideoPlayer", dotNetObjectRef);
+
+            // Seek to the start time of the segment
+            var startTs = ParseTimeSpan(editSegmentStartTime);
+            if (startTs.HasValue)
+            {
+                await JSRuntime.InvokeVoidAsync("seekEditSegmentVideoToTime", startTs.Value.TotalSeconds);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error initializing edit segment video player: {ex.Message}");
+        }
+    }
+
+    private async Task PreviewEditedSegment()
+    {
+        var startTs = ParseTimeSpan(editSegmentStartTime);
+        var endTs = ParseTimeSpan(editSegmentEndTime);
+
+        if (!startTs.HasValue || !endTs.HasValue || endTs.Value <= startTs.Value)
+            return;
+
+        try
+        {
+            // Seek to start time and play
+            await JSRuntime.InvokeVoidAsync("playEditSegmentRange", startTs.Value.TotalSeconds, endTs.Value.TotalSeconds);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error previewing segment: {ex.Message}");
+        }
+    }
+
+    private async Task SaveEditSegment()
+    {
+        if (segmentForEdit == null || !IsEditSegmentValid())
+            return;
+
+        try
+        {
+            var startTs = ParseTimeSpan(editSegmentStartTime);
+            var endTs = ParseTimeSpan(editSegmentEndTime);
+
+            if (!startTs.HasValue || !endTs.HasValue)
+                return;
+
+            // Update the segment's timestamps
+            segmentForEdit.StartTime = startTs.Value;
+            segmentForEdit.EndTime = endTs.Value;
+
+            // If the segment was already extracted, mark it as needing re-extraction
+            // by changing status back to Approved
+            if (segmentForEdit.Status == SegmentStatus.Extracted)
+            {
+                segmentForEdit.Status = SegmentStatus.Approved;
+                // Note: We're not deleting the old clip file here to preserve it
+                // The user can choose to extract again with the new timestamps
+            }
+
+            // Save the updated segment to the database
+            await SegmentService.UpdateSegmentAsync(segmentForEdit);
+
+            // Close the modal
+            showEditSegmentModal = false;
+            segmentForEdit = null;
+            editSegmentStartTime = string.Empty;
+            editSegmentEndTime = string.Empty;
+
+            // Reload segments to reflect the changes
+            await LoadProject();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error saving segment edits: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", $"Failed to save segment changes: {ex.Message}");
+        }
+    }
+
+
     private string GetCustomClipSubtitlePreviewPosition()
     {
         return customClipSubtitleOptions.Position switch
@@ -2533,7 +2813,7 @@ else
     {
         selectedSegmentForPost = segment;
         selectedPlatformName = platformName;
-        
+
         // Reset form
         postTitle = segment.Summary;
         postDescription = "";
@@ -2547,14 +2827,15 @@ else
         publishError = "";
         publishSuccess = "";
         publishedUrl = "";
-        
+        contentGenerationError = "";
+
         // Validate video for the selected platform
         if (!string.IsNullOrEmpty(segment.ClipPath))
         {
             videoValidationResult = await SocialMediaPublisherService.ValidateVideoForPlatformAsync(
                 segment.ClipPath, platformName);
         }
-        
+
         showPostModal = true;
         StateHasChanged();
     }
@@ -2565,7 +2846,81 @@ else
         selectedSegmentForPost = null;
         selectedPlatformName = "";
         videoValidationResult = null;
+        contentGenerationError = "";
         StateHasChanged();
+    }
+
+    private async Task GenerateSocialMediaContent()
+    {
+        if (project == null || selectedSegmentForPost == null || isGeneratingContent)
+            return;
+
+        try
+        {
+            isGeneratingContent = true;
+            contentGenerationError = "";
+            StateHasChanged();
+
+            // Reload the segment from the database to ensure we have the latest transcript text
+            // This is important because the transcript may have been updated during clip extraction
+            var refreshedSegment = await SegmentService.GetSegmentByIdAsync(selectedSegmentForPost.Id);
+            if (refreshedSegment == null)
+            {
+                contentGenerationError = "Segment not found. Please refresh the page.";
+                return;
+            }
+
+            // Use only the segment's transcript text for generating social media content
+            // This ensures the title and description are based on the specific clip, not the entire video
+            string? transcriptContent = refreshedSegment.TranscriptText;
+
+            if (string.IsNullOrEmpty(transcriptContent))
+            {
+                contentGenerationError = "No transcript available for this segment. Extract the clip with subtitles enabled to generate a transcript, or the clip may still be processing.";
+                return;
+            }
+
+            // Get user settings
+            var settings = await SettingsService.GetSettingsAsync();
+
+            var progress = new Progress<string>(status =>
+            {
+                // Could update UI with status if needed
+                Console.WriteLine($"AI Content Generation: {status}");
+            });
+
+            // Call AI service to generate title and description
+            var result = await AiService.GenerateSocialMediaContentAsync(
+                transcriptContent,
+                selectedPlatformName,
+                settings,
+                progress);
+
+            if (result.Success && !string.IsNullOrEmpty(result.Title))
+            {
+                // Autofill the title and description
+                postTitle = result.Title;
+                if (!string.IsNullOrEmpty(result.Description))
+                {
+                    postDescription = result.Description;
+                }
+                contentGenerationError = "";
+            }
+            else
+            {
+                contentGenerationError = result.Error ?? "Failed to generate content";
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error generating social media content: {ex.Message}");
+            contentGenerationError = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isGeneratingContent = false;
+            StateHasChanged();
+        }
     }
 
     private async Task ConnectToPlatform()

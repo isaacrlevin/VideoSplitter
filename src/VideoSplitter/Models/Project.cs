@@ -19,6 +19,7 @@ public class Project
     public string? YouTubeUrl { get; set; }
     
     public string? ThumbnailPath { get; set; }
+    public string? PreviewVideoPath { get; set; }
     
     public TimeSpan? Duration { get; set; }
     

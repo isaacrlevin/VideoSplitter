@@ -1,6 +1,7 @@
 @page "/settings"
 @using VideoSplitter.Services
 @using VideoSplitter.Models
+@using VideoSplitter.Models.LLM
 @inject ISettingsService SettingsService
 @inject ITranscriptService TranscriptService
 @inject IPromptService PromptService
@@ -166,7 +167,7 @@ else
                         <div class="card-body">
                             <div class="mb-3">
                                 <label class="form-label">LLM Provider</label>
-                                <InputSelect @bind-Value="settings.LlmProvider" class="form-select">
+                                <InputSelect @bind-Value="settings.LlmProvider" class="form-select" @onchange="OnLlmProviderChanged">
                                     <option value="@LlmProvider.Local">Local (Ollama)</option>
                                     <option value="@LlmProvider.OpenAI">OpenAI</option>
                                     <option value="@LlmProvider.Anthropic">Anthropic Claude</option>
@@ -196,155 +197,19 @@ else
                                         </span>
                                     </div>
                                 </div>
-
-                                @if (ollamaRunning && ollamaModels.Any())
-                                {
-                                    <div class="mb-3">
-                                        <label class="form-label">Ollama Model</label>
-                                        <InputSelect @bind-Value="settings.Ollama.Model" class="form-select">
-                                            <option value="">Select a model...</option>
-                                            @foreach (var model in ollamaModels)
-                                            {
-                                                <option value="@model">@model</option>
-                                            }
-                                        </InputSelect>
-                                    </div>
-                                }
                             }
                             else if (settings.LlmProvider == LlmProvider.OpenAI)
                             {
                                 <div class="mb-3">
                                     <label for="openaiKey" class="form-label">OpenAI API Key</label>
-                                    <div class="input-group">
-                                        <InputText @bind-Value="settings.OpenAi.ApiKey" class="form-control" type="password" id="openaiKey" placeholder="sk-..." />
-                                        <button class="btn btn-outline-primary" type="button" @onclick="GetOpenAiModels" disabled="@(fetchingOpenAiModels || string.IsNullOrWhiteSpace(settings.OpenAi.ApiKey))">
-                                            @if (fetchingOpenAiModels)
-                                            {
-                                                <span class="spinner-border spinner-border-sm" role="status"></span>
-                                            }
-                                            else
-                                            {
-                                                <span class="oi oi-list"></span>
-                                            }
-                                            Get Models
-                                        </button>
-                                    </div>
-                                    @if (!string.IsNullOrEmpty(openAiModelsError))
-                                    {
-                                        <div class="small mt-1 text-danger">@openAiModelsError</div>
-                                    }
-                                </div>
-                                <div class="mb-3">
-                                    <label for="openaiModel" class="form-label">Model</label>
-                                    <div class="input-group">
-                                        @if (openAiModels.Any())
-                                        {
-                                            <InputSelect @bind-Value="settings.OpenAi.Model" class="form-select" id="openaiModel">
-                                                <option value="">Select a model...</option>
-                                                @foreach (var model in openAiModels)
-                                                {
-                                                    <option value="@model">@model</option>
-                                                }
-                                            </InputSelect>
-                                        }
-                                        else
-                                        {
-                                            <InputText @bind-Value="settings.OpenAi.Model" class="form-control" id="openaiModel" placeholder="gpt-4.1-mini" />
-                                        }
-                                        <button class="btn btn-outline-secondary" type="button" @onclick="TestOpenAi">
-                                            @if (testingOpenAi)
-                                            {
-                                                <span class="spinner-border spinner-border-sm" role="status"></span>
-                                            }
-                                            else
-                                            {
-                                                <span class="oi oi-check"></span>
-                                            }
-                                            Test
-                                        </button>
-                                    </div>
-                                    @if (!string.IsNullOrEmpty(openAiTestResult))
-                                    {
-                                        <div class="small mt-1 @(openAiTestSuccess ? "text-success" : "text-danger")">
-                                            @openAiTestResult
-                                        </div>
-                                    }
-                                    @if (openAiModels.Any())
-                                    {
-                                        <small class="text-muted">@openAiModels.Count models available</small>
-                                    }
-                                    else
-                                    {
-                                        <small class="text-muted">Enter your API key and click "Get Models" to load available models, or type a model name manually.</small>
-                                    }
+                                    <InputText @bind-Value="settings.OpenAi.ApiKey" class="form-control" type="password" id="openaiKey" placeholder="sk-..." />
                                 </div>
                             }
                             else if (settings.LlmProvider == LlmProvider.Anthropic)
                             {
                                 <div class="mb-3">
                                     <label for="anthropicKey" class="form-label">Anthropic API Key</label>
-                                    <div class="input-group">
-                                        <InputText @bind-Value="settings.Anthropic.ApiKey" class="form-control" type="password" id="anthropicKey" placeholder="sk-ant-..." />
-                                        <button class="btn btn-outline-primary" type="button" @onclick="GetAnthropicModels" disabled="@(fetchingAnthropicModels || string.IsNullOrWhiteSpace(settings.Anthropic.ApiKey))">
-                                            @if (fetchingAnthropicModels)
-                                            {
-                                                <span class="spinner-border spinner-border-sm" role="status"></span>
-                                            }
-                                            else
-                                            {
-                                                <span class="oi oi-list"></span>
-                                            }
-                                            Get Models
-                                        </button>
-                                    </div>
-                                    @if (!string.IsNullOrEmpty(anthropicModelsError))
-                                    {
-                                        <div class="small mt-1 text-danger">@anthropicModelsError</div>
-                                    }
-                                </div>
-                                <div class="mb-3">
-                                    <label for="anthropicModel" class="form-label">Model</label>
-                                    <div class="input-group">
-                                        @if (anthropicModels.Any())
-                                        {
-                                            <InputSelect @bind-Value="settings.Anthropic.Model" class="form-select" id="anthropicModel">
-                                                <option value="">Select a model...</option>
-                                                @foreach (var model in anthropicModels)
-                                                {
-                                                    <option value="@model">@model</option>
-                                                }
-                                            </InputSelect>
-                                        }
-                                        else
-                                        {
-                                            <InputText @bind-Value="settings.Anthropic.Model" class="form-control" id="anthropicModel" placeholder="claude-sonnet-4-20250514" />
-                                        }
-                                        <button class="btn btn-outline-secondary" type="button" @onclick="TestAnthropic">
-                                            @if (testingAnthropic)
-                                            {
-                                                <span class="spinner-border spinner-border-sm" role="status"></span>
-                                            }
-                                            else
-                                            {
-                                                <span class="oi oi-check"></span>
-                                            }
-                                            Test
-                                        </button>
-                                    </div>
-                                    @if (!string.IsNullOrEmpty(anthropicTestResult))
-                                    {
-                                        <div class="small mt-1 @(anthropicTestSuccess ? "text-success" : "text-danger")">
-                                            @anthropicTestResult
-                                        </div>
-                                    }
-                                    @if (anthropicModels.Any())
-                                    {
-                                        <small class="text-muted">@anthropicModels.Count models available</small>
-                                    }
-                                    else
-                                    {
-                                        <small class="text-muted">Enter your API key and click "Get Models" to load available models, or type a model name manually.</small>
-                                    }
+                                    <InputText @bind-Value="settings.Anthropic.ApiKey" class="form-control" type="password" id="anthropicKey" placeholder="sk-ant-..." />
                                 </div>
                             }
                             else if (settings.LlmProvider == LlmProvider.AzureOpenAI)
@@ -358,100 +223,66 @@ else
                                     <label for="azureOpenAiEndpoint" class="form-label">Azure OpenAI Endpoint</label>
                                     <InputText @bind-Value="settings.AzureOpenAi.Endpoint" class="form-control" id="azureOpenAiEndpoint" placeholder="https://your-resource.openai.azure.com/" />
                                 </div>
-
-                                <div class="mb-3">
-                                    <label for="azureOpenAiDeployment" class="form-label">Deployment Name</label>
-                                    <div class="input-group">
-                                        <InputText @bind-Value="settings.AzureOpenAi.DeploymentName" class="form-control" id="azureOpenAiDeployment" placeholder="gpt-4o" />
-                                        <button class="btn btn-outline-secondary" type="button" @onclick="TestAzureOpenAi">
-                                            @if (testingAzureOpenAi)
-                                            {
-                                                <span class="spinner-border spinner-border-sm" role="status"></span>
-                                            }
-                                            else
-                                            {
-                                                <span class="oi oi-check"></span>
-                                            }
-                                            Test
-                                        </button>
-                                    </div>
-                                    @if (!string.IsNullOrEmpty(azureOpenAiTestResult))
-                                    {
-                                        <div class="small mt-1 @(azureOpenAiTestSuccess ? "text-success" : "text-danger")">
-                                            @azureOpenAiTestResult
-                                        </div>
-                                    }
-                                </div>
                             }
                             else if (settings.LlmProvider == LlmProvider.GoogleGemini)
                             {
                                 <div class="mb-3">
                                     <label for="googleApiKey" class="form-label">Google Gemini API Key</label>
-                                    <div class="input-group">
-                                        <InputText @bind-Value="settings.GoogleGemini.ApiKey" class="form-control" type="password" id="googleApiKey" placeholder="Enter your Gemini API key" />
-                                        <button class="btn btn-outline-primary" type="button" @onclick="GetGoogleGeminiModels" disabled="@(fetchingGoogleGeminiModels || string.IsNullOrWhiteSpace(settings.GoogleGemini.ApiKey))">
-                                            @if (fetchingGoogleGeminiModels)
-                                            {
-                                                <span class="spinner-border spinner-border-sm" role="status"></span>
-                                            }
-                                            else
-                                            {
-                                                <span class="oi oi-list"></span>
-                                            }
-                                            Get Models
-                                        </button>
-                                    </div>
-                                    @if (!string.IsNullOrEmpty(googleGeminiModelsError))
-                                    {
-                                        <div class="small mt-1 text-danger">@googleGeminiModelsError</div>
-                                    }
+                                    <InputText @bind-Value="settings.GoogleGemini.ApiKey" class="form-control" type="password" id="googleApiKey" placeholder="Enter your Gemini API key" />
                                 </div>
+                            }
 
-                                <div class="mb-3">
-                                    <label for="googleModelName" class="form-label">Model Name</label>
-                                    <div class="input-group">
-                                        @if (googleGeminiModels.Any())
+                            <div class="mb-3">
+                                <label class="form-label">@(settings.LlmProvider == LlmProvider.AzureOpenAI ? "Deployment" : "Model")</label>
+                                <div class="input-group">
+                                    <InputSelect class="form-select" @bind-Value="SelectedLlmModelValue">
+                                        <option value="">Select @(settings.LlmProvider == LlmProvider.AzureOpenAI ? "a deployment" : "a model")...</option>
+                                        @foreach (var option in llmModelOptions)
                                         {
-                                            <InputSelect @bind-Value="settings.GoogleGemini.Model" class="form-select" id="googleModelName">
-                                                <option value="">Select a model...</option>
-                                                @foreach (var model in googleGeminiModels)
-                                                {
-                                                    <option value="@model">@model</option>
-                                                }
-                                            </InputSelect>
+                                            <option value="@option.Id">@option.DisplayName</option>
+                                        }
+                                    </InputSelect>
+                                    <button class="btn btn-outline-primary" type="button" @onclick="LoadLlmModels" disabled="@isFetchingLlmModels">
+                                        @if (isFetchingLlmModels)
+                                        {
+                                            <span class="spinner-border spinner-border-sm" role="status"></span>
                                         }
                                         else
                                         {
-                                            <InputText @bind-Value="settings.GoogleGemini.Model" class="form-control" id="googleModelName" placeholder="gemini-2.5-pro" />
+                                            <span class="oi oi-list"></span>
                                         }
-                                        <button class="btn btn-outline-secondary" type="button" @onclick="TestGoogleGemini">
-                                            @if (testingGoogleGemini)
-                                            {
-                                                <span class="spinner-border spinner-border-sm" role="status"></span>
-                                            }
-                                            else
-                                            {
-                                                <span class="oi oi-check"></span>
-                                            }
-                                            Test
-                                        </button>
-                                    </div>
-                                    @if (!string.IsNullOrEmpty(googleGeminiTestResult))
+                                        Get Models
+                                    </button>
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(llmModelsError))
+                                {
+                                    <div class="small mt-1 text-danger">@llmModelsError</div>
+                                }
+                                else if (llmModelOptions.Any())
+                                {
+                                    <small class="text-muted">@llmModelOptions.Count model(s) available</small>
+                                }
+                            </div>
+
+                            <div class="mb-3">
+                                <button class="btn btn-outline-secondary" type="button" @onclick="TestSelectedLlmProvider">
+                                    @if (IsTestingSelectedLlmProvider())
                                     {
-                                        <div class="small mt-1 @(googleGeminiTestSuccess ? "text-success" : "text-danger")">
-                                            @googleGeminiTestResult
-                                        </div>
-                                    }
-                                    @if (googleGeminiModels.Any())
-                                    {
-                                        <small class="text-muted">@googleGeminiModels.Count models available</small>
+                                        <span class="spinner-border spinner-border-sm" role="status"></span>
                                     }
                                     else
                                     {
-                                        <small class="text-muted">Enter your API key and click "Get Models" to load available models, or type a model name manually.</small>
+                                        <span class="oi oi-check"></span>
                                     }
-                                </div>
-                            }
+                                    Test
+                                </button>
+                                @if (!string.IsNullOrEmpty(GetSelectedLlmTestResult()))
+                                {
+                                    <div class="small mt-1 @(IsSelectedLlmTestSuccess() ? "text-success" : "text-danger")">
+                                        @GetSelectedLlmTestResult()
+                                    </div>
+                                }
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -795,10 +626,15 @@ else
     private string deleteSegmentsResult = string.Empty;
     private bool deleteSegmentsSuccess = false;
 
+    private bool isFetchingLlmModels = false;
+    private string llmModelsError = string.Empty;
+    private List<LlmModelOption> llmModelOptions = [];
+
     protected override async Task OnInitializedAsync()
     {
         settings = await SettingsService.GetSettingsAsync();
         await CheckSystemStatus();
+        await LoadLlmModels();
     }
 
     private void ToggleSection(ref bool sectionState)
@@ -1341,5 +1177,186 @@ else
             deletingSegments = false;
             StateHasChanged();
         }
+    }
+
+    private async Task OnLlmProviderChanged(ChangeEventArgs e)
+    {
+        if (settings == null || e.Value == null)
+            return;
+
+        if (Enum.TryParse<LlmProvider>(e.Value.ToString(), out var provider))
+        {
+            settings.LlmProvider = provider;
+            llmModelsError = string.Empty;
+            llmModelOptions.Clear();
+            await LoadLlmModels();
+        }
+    }
+
+    private async Task LoadLlmModels()
+    {
+        if (settings == null)
+            return;
+
+        isFetchingLlmModels = true;
+        llmModelsError = string.Empty;
+        StateHasChanged();
+
+        try
+        {
+            var result = await SettingsService.GetLlmModelOptionsAsync(settings);
+            if (result.Success)
+            {
+                llmModelOptions = result.Models;
+                EnsureSelectedModelValue();
+            }
+            else
+            {
+                llmModelOptions = [];
+                llmModelsError = result.ErrorMessage ?? "Failed to load models.";
+            }
+        }
+        catch (Exception ex)
+        {
+            llmModelOptions = [];
+            llmModelsError = ex.Message;
+        }
+        finally
+        {
+            isFetchingLlmModels = false;
+            StateHasChanged();
+        }
+    }
+
+    private string? SelectedLlmModelValue
+    {
+        get => GetSelectedLlmModelValue();
+        set => SetSelectedLlmModelValue(value);
+    }
+
+    private string? GetSelectedLlmModelValue()
+    {
+        if (settings == null)
+            return string.Empty;
+
+        return settings.LlmProvider switch
+        {
+            LlmProvider.Local => settings.Ollama.Model,
+            LlmProvider.OpenAI => settings.OpenAi.Model,
+            LlmProvider.Anthropic => settings.Anthropic.Model,
+            LlmProvider.AzureOpenAI => settings.AzureOpenAi.DeploymentName,
+            LlmProvider.GoogleGemini => settings.GoogleGemini.Model,
+            _ => string.Empty
+        };
+    }
+
+    private void SetSelectedLlmModelValue(string? value)
+    {
+        if (settings == null)
+            return;
+
+        switch (settings.LlmProvider)
+        {
+            case LlmProvider.Local:
+                settings.Ollama.Model = value;
+                break;
+            case LlmProvider.OpenAI:
+                settings.OpenAi.Model = value;
+                break;
+            case LlmProvider.Anthropic:
+                settings.Anthropic.Model = value;
+                break;
+            case LlmProvider.AzureOpenAI:
+                settings.AzureOpenAi.DeploymentName = value;
+                break;
+            case LlmProvider.GoogleGemini:
+                settings.GoogleGemini.Model = value;
+                break;
+        }
+    }
+
+    private void EnsureSelectedModelValue()
+    {
+        if (settings == null || !llmModelOptions.Any())
+            return;
+
+        var selected = GetSelectedLlmModelValue();
+        if (string.IsNullOrWhiteSpace(selected))
+        {
+            SetSelectedLlmModelValue(llmModelOptions.First().Id);
+        }
+    }
+
+    private async Task TestSelectedLlmProvider()
+    {
+        if (settings == null)
+            return;
+
+        switch (settings.LlmProvider)
+        {
+            case LlmProvider.Local:
+                await CheckOllamaStatus();
+                break;
+            case LlmProvider.OpenAI:
+                await TestOpenAi();
+                break;
+            case LlmProvider.Anthropic:
+                await TestAnthropic();
+                break;
+            case LlmProvider.AzureOpenAI:
+                await TestAzureOpenAi();
+                break;
+            case LlmProvider.GoogleGemini:
+                await TestGoogleGemini();
+                break;
+        }
+    }
+
+    private bool IsTestingSelectedLlmProvider()
+    {
+        if (settings == null)
+            return false;
+
+        return settings.LlmProvider switch
+        {
+            LlmProvider.Local => checkingOllama,
+            LlmProvider.OpenAI => testingOpenAi,
+            LlmProvider.Anthropic => testingAnthropic,
+            LlmProvider.AzureOpenAI => testingAzureOpenAi,
+            LlmProvider.GoogleGemini => testingGoogleGemini,
+            _ => false
+        };
+    }
+
+    private string GetSelectedLlmTestResult()
+    {
+        if (settings == null)
+            return string.Empty;
+
+        return settings.LlmProvider switch
+        {
+            LlmProvider.Local => ollamaRunning ? "Ollama is running." : "Ollama is not running.",
+            LlmProvider.OpenAI => openAiTestResult,
+            LlmProvider.Anthropic => anthropicTestResult,
+            LlmProvider.AzureOpenAI => azureOpenAiTestResult,
+            LlmProvider.GoogleGemini => googleGeminiTestResult,
+            _ => string.Empty
+        };
+    }
+
+    private bool IsSelectedLlmTestSuccess()
+    {
+        if (settings == null)
+            return false;
+
+        return settings.LlmProvider switch
+        {
+            LlmProvider.Local => ollamaRunning,
+            LlmProvider.OpenAI => openAiTestSuccess,
+            LlmProvider.Anthropic => anthropicTestSuccess,
+            LlmProvider.AzureOpenAI => azureOpenAiTestSuccess,
+            LlmProvider.GoogleGemini => googleGeminiTestSuccess,
+            _ => false
+        };
     }
 }
