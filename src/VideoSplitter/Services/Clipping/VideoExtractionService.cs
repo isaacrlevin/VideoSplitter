@@ -54,7 +54,6 @@ public class VideoExtractionService : IVideoExtractionService
     private readonly IAudioExtractionService _audioExtractionService;
     private readonly ITranscriptService _transcriptService;
     private readonly ISettingsService _settingsService;
-    private readonly ISegmentService _segmentService;
     private readonly HttpClient _httpClient;
 
     // Standard vertical video resolution for TikTok/YouTube Shorts
@@ -68,7 +67,6 @@ public class VideoExtractionService : IVideoExtractionService
         IAudioExtractionService audioExtractionService,
         ITranscriptService transcriptService,
         ISettingsService settingsService,
-        ISegmentService segmentService,
         HttpClient httpClient)
     {
         _projectService = projectService;
@@ -77,7 +75,6 @@ public class VideoExtractionService : IVideoExtractionService
         _audioExtractionService = audioExtractionService;
         _transcriptService = transcriptService;
         _settingsService = settingsService;
-        _segmentService = segmentService;
         _httpClient = httpClient;
     }
 
@@ -221,7 +218,7 @@ public class VideoExtractionService : IVideoExtractionService
                 // Step 4: Generate SRT from the new transcript
                 tempSrtPath = Path.Combine(clipsFolder, $"{sanitizedProjectName}-{segmentNumber}-temp.srt");
                 var srtResult = await _subtitleService.GenerateSrtFromWhisperAsync(tempTranscriptPath, tempSrtPath);
-
+                
                 if (!srtResult.Success)
                 {
                     return new ExtractionResult
@@ -229,16 +226,6 @@ public class VideoExtractionService : IVideoExtractionService
                         Success = false,
                         Error = $"Failed to generate SRT file: {srtResult.Error}"
                     };
-                }
-
-                // Step 4.5: Read and store the transcript content in the segment
-                // This preserves the clip-specific transcript for later use (e.g., AI content generation)
-                var clipTranscriptContent = await _transcriptService.ReadTranscriptAsync(tempTranscriptPath);
-                if (!string.IsNullOrWhiteSpace(clipTranscriptContent))
-                {
-                    segment.TranscriptText = clipTranscriptContent;
-                    // Save the updated segment to the database
-                    await _segmentService.UpdateSegmentAsync(segment);
                 }
 
                 progress?.Report(0.8);

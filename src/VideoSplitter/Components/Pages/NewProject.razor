@@ -234,28 +234,10 @@
                     createdProject.ThumbnailPath = thumbnailPath;
                     await ProjectService.UpdateProjectAsync(createdProject);
                 }
+            }
 
-                // Create low-quality preview for faster loading in embedded player
-                try
-                {
-                    var tempFolder = Path.Combine(projectFolder, "temp");
-                    Directory.CreateDirectory(tempFolder);
-
-                    var previewPath = await VideoService.CreatePreviewVideoAsync(videoPath, tempFolder);
-                    if (!string.IsNullOrEmpty(previewPath) && File.Exists(previewPath))
-                    {
-                        createdProject.PreviewVideoPath = previewPath;
-                        await ProjectService.UpdateProjectAsync(createdProject);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Preview creation failed: {ex.Message}");
-                }
-
-                // Navigate to project page
-                Navigation.NavigateTo($"/project/{createdProject.Id}");
-                }
+            // Navigate to project page
+            Navigation.NavigateTo($"/project/{createdProject.Id}");
         }
         catch (Exception ex)
         {

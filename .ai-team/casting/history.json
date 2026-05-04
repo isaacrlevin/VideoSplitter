@@ -1,0 +1,22 @@
+{
+  "universe_usage_history": [
+    {
+      "assignment_id": "2026-02-11T23:46:20-videosplitter",
+      "universe": "Breaking Bad",
+      "timestamp": "2026-02-11T23:46:20Z"
+    }
+  ],
+  "assignment_cast_snapshots": {
+    "2026-02-11T23:46:20-videosplitter": {
+      "universe": "Breaking Bad",
+      "agent_map": {
+        "hank": "Hank",
+        "jesse": "Jesse",
+        "gale": "Gale",
+        "mike": "Mike",
+        "scribe": "Scribe"
+      },
+      "created_at": "2026-02-11T23:46:20Z"
+    }
+  }
+}

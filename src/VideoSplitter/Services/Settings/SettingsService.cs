@@ -23,8 +23,6 @@ public interface ISettingsService
     Task<OpenAiModelsResult> GetOpenAiModelsAsync(string apiKey);
     Task<AnthropicModelsResult> GetAnthropicModelsAsync(string apiKey);
     Task<GoogleGeminiModelsResult> GetGoogleGeminiModelsAsync(string apiKey);
-    Task<AzureOpenAiDeploymentsResult> GetAzureOpenAiDeploymentsAsync(string apiKey, string endpoint);
-    Task<LlmModelOptionsResult> GetLlmModelOptionsAsync(AppSettings settings);
 }
 
 
@@ -440,12 +438,12 @@ public class SettingsService : ISettingsService
                 new(ChatRole.User, "Hi")
             };
 
-            //var options = new ChatOptions
-            //{
-            //    MaxOutputTokens = 10
-            //};
+            var options = new ChatOptions
+            {
+                MaxOutputTokens = 10
+            };
 
-            var response = await chatClient.GetResponseAsync(messages);
+            var response = await chatClient.GetResponseAsync(messages, options);
             
             if (response?.Messages?.Count > 0)
                 return ValidationResult.Success();
@@ -592,158 +590,6 @@ public class SettingsService : ISettingsService
         catch
         {
             return false;
-        }
-    }
-
-    public async Task<LlmModelOptionsResult> GetLlmModelOptionsAsync(AppSettings settings)
-    {
-        return settings.LlmProvider switch
-        {
-            LlmProvider.Local => await GetLocalLlmModelOptionsAsync(),
-            LlmProvider.OpenAI => await GetOpenAiLlmModelOptionsAsync(settings.OpenAi.ApiKey),
-            LlmProvider.Anthropic => await GetAnthropicLlmModelOptionsAsync(settings.Anthropic.ApiKey),
-            LlmProvider.AzureOpenAI => await GetAzureOpenAiLlmModelOptionsAsync(settings.AzureOpenAi.ApiKey, settings.AzureOpenAi.Endpoint),
-            LlmProvider.GoogleGemini => await GetGoogleGeminiLlmModelOptionsAsync(settings.GoogleGemini.ApiKey),
-            _ => LlmModelOptionsResult.Failure("Unsupported LLM provider")
-        };
-    }
-
-    private async Task<LlmModelOptionsResult> GetLocalLlmModelOptionsAsync()
-    {
-        if (!await IsOllamaRunningAsync())
-        {
-            return LlmModelOptionsResult.Failure("Ollama is not running");
-        }
-
-        var models = (await GetOllamaModelsAsync())
-            .Where(m => !string.IsNullOrWhiteSpace(m))
-            .Select(m => new LlmModelOption { Id = m, DisplayName = m })
-            .OrderBy(m => m.DisplayName)
-            .ToList();
-
-        return LlmModelOptionsResult.Ok(models);
-    }
-
-    private async Task<LlmModelOptionsResult> GetOpenAiLlmModelOptionsAsync(string? apiKey)
-    {
-        if (string.IsNullOrWhiteSpace(apiKey))
-        {
-            return LlmModelOptionsResult.Failure("OpenAI API key is required");
-        }
-
-        var result = await GetOpenAiModelsAsync(apiKey);
-        if (!result.Success)
-        {
-            return LlmModelOptionsResult.Failure(result.ErrorMessage ?? "Failed to fetch OpenAI models");
-        }
-
-        return LlmModelOptionsResult.Ok(result.Models
-            .Select(m => new LlmModelOption { Id = m, DisplayName = m })
-            .ToList());
-    }
-
-    private async Task<LlmModelOptionsResult> GetAnthropicLlmModelOptionsAsync(string? apiKey)
-    {
-        if (string.IsNullOrWhiteSpace(apiKey))
-        {
-            return LlmModelOptionsResult.Failure("Anthropic API key is required");
-        }
-
-        var result = await GetAnthropicModelsAsync(apiKey);
-        if (!result.Success)
-        {
-            return LlmModelOptionsResult.Failure(result.ErrorMessage ?? "Failed to fetch Anthropic models");
-        }
-
-        return LlmModelOptionsResult.Ok(result.Models
-            .Select(m => new LlmModelOption { Id = m, DisplayName = m })
-            .ToList());
-    }
-
-    private async Task<LlmModelOptionsResult> GetGoogleGeminiLlmModelOptionsAsync(string? apiKey)
-    {
-        if (string.IsNullOrWhiteSpace(apiKey))
-        {
-            return LlmModelOptionsResult.Failure("Google Gemini API key is required");
-        }
-
-        var result = await GetGoogleGeminiModelsAsync(apiKey);
-        if (!result.Success)
-        {
-            return LlmModelOptionsResult.Failure(result.ErrorMessage ?? "Failed to fetch Google Gemini models");
-        }
-
-        return LlmModelOptionsResult.Ok(result.Models
-            .Select(m => new LlmModelOption { Id = m, DisplayName = m })
-            .ToList());
-    }
-
-    private async Task<LlmModelOptionsResult> GetAzureOpenAiLlmModelOptionsAsync(string? apiKey, string? endpoint)
-    {
-        if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(endpoint))
-        {
-            return LlmModelOptionsResult.Failure("Azure OpenAI API key and endpoint are required");
-        }
-
-        var result = await GetAzureOpenAiDeploymentsAsync(apiKey, endpoint);
-        if (!result.Success)
-        {
-            return LlmModelOptionsResult.Failure(result.ErrorMessage ?? "Failed to fetch Azure OpenAI deployments");
-        }
-
-        return LlmModelOptionsResult.Ok(result.Deployments
-            .Select(d => new LlmModelOption
-            {
-                Id = d.Id,
-                DisplayName = string.IsNullOrWhiteSpace(d.Model) ? d.Id : $"{d.Id} ({d.Model})",
-                Description = d.Model
-            })
-            .OrderBy(d => d.DisplayName)
-            .ToList());
-    }
-
-    public async Task<AzureOpenAiDeploymentsResult> GetAzureOpenAiDeploymentsAsync(string apiKey, string endpoint)
-    {
-        if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(endpoint))
-            return AzureOpenAiDeploymentsResult.Failure("API key and endpoint are required");
-
-        try
-        {
-            using var httpClient = new HttpClient();
-            httpClient.DefaultRequestHeaders.Add("api-key", apiKey);
-
-            var normalizedEndpoint = endpoint.TrimEnd('/');
-            var response = await httpClient.GetAsync($"{normalizedEndpoint}/openai/deployments?api-version=2024-06-01");
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                return AzureOpenAiDeploymentsResult.Failure($"Azure OpenAI API returned {response.StatusCode}: {errorContent}");
-            }
-
-            var content = await response.Content.ReadAsStringAsync();
-            var payload = JsonSerializer.Deserialize<AzureOpenAiDeploymentsResponse>(content, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
-
-            if (payload?.Data == null)
-                return AzureOpenAiDeploymentsResult.Failure("Failed to parse deployments response");
-
-            var deployments = payload.Data
-                .Where(d => !string.IsNullOrWhiteSpace(d.Id))
-                .Select(d => new AzureOpenAiDeploymentInfo
-                {
-                    Id = d.Id!,
-                    Model = d.Model
-                })
-                .ToList();
-
-            return AzureOpenAiDeploymentsResult.Ok(deployments);
-        }
-        catch (Exception ex)
-        {
-            return AzureOpenAiDeploymentsResult.Failure($"Connection error: {ex.Message}");
         }
     }
 }

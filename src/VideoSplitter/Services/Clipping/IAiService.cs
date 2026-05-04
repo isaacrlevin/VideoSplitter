@@ -9,10 +9,4 @@ public interface IAiService
         string transcriptContent,
         AppSettings settings,
         IProgress<string>? progress = null);
-
-    Task<(bool Success, string? Title, string? Description, string? Error)> GenerateSocialMediaContentAsync(
-        string transcriptContent,
-        string platformName,
-        AppSettings settings,
-        IProgress<string>? progress = null);
 }

@@ -2,7 +2,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 using VideoSplitter.Models;
-using VideoSplitter.Models.LLM;
 
 namespace VideoSplitter.Services.LlmProviders;
 
@@ -81,11 +80,14 @@ public abstract class LlmProviderBase : ILlmProvider
 
             var chatOptions = new ChatOptions
             {
+                Temperature = 0.1f,
+                //Temperature = 0.0f,
+                TopP = 0.9f,
                 MaxOutputTokens = 4000                
             };
 
 
-            var response = await chatClient.GetResponseAsync(messages);
+            var response = await chatClient.GetResponseAsync(messages, chatOptions);
             var aiResponse = response.Messages[0].Text ?? string.Empty;
 
             if (string.IsNullOrWhiteSpace(aiResponse))

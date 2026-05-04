@@ -1,0 +1,39 @@
+{
+  "agents": {
+    "hank": {
+      "persistent_name": "Hank",
+      "universe": "Breaking Bad",
+      "created_at": "2026-02-11T23:46:20Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "jesse": {
+      "persistent_name": "Jesse",
+      "universe": "Breaking Bad",
+      "created_at": "2026-02-11T23:46:20Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "gale": {
+      "persistent_name": "Gale",
+      "universe": "Breaking Bad",
+      "created_at": "2026-02-11T23:46:20Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "mike": {
+      "persistent_name": "Mike",
+      "universe": "Breaking Bad",
+      "created_at": "2026-02-11T23:46:20Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "scribe": {
+      "persistent_name": "Scribe",
+      "universe": "Breaking Bad",
+      "created_at": "2026-02-11T23:46:20Z",
+      "legacy_named": false,
+      "status": "active"
+    }
+  }
+}

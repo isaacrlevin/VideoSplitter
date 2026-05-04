@@ -17,7 +17,6 @@ public interface IVideoService
     Task<bool> IsValidVideoFileAsync(string filePath);
     Task<string> GenerateThumbnailAsync(string videoPath, string outputPath, TimeSpan position);
     Task<(bool Success, string? Error)> ConfigureFFMpegAsync();
-    Task<string?> CreatePreviewVideoAsync(string inputVideoPath, string outputFolder);
 }
 
 public class VideoService : IVideoService
@@ -557,54 +556,5 @@ public class VideoService : IVideoService
                 finalFile);
 
         return finalFile;
-    }
-
-    public async Task<string?> CreatePreviewVideoAsync(string inputVideoPath, string outputFolder)
-    {
-        try
-        {
-            if (string.IsNullOrEmpty(inputVideoPath) || !File.Exists(inputVideoPath))
-                return null;
-
-            // Ensure ffmpeg configured
-            if (!_isFFMpegConfigured)
-            {
-                var configResult = await ConfigureFFMpegAsync();
-                if (!configResult.Success)
-                {
-                    Console.WriteLine($"FFMpeg configuration failed: {configResult.Error}");
-                    return null;
-                }
-            }
-
-            Directory.CreateDirectory(outputFolder);
-            var previewFileName = $"preview_{Guid.NewGuid():N}.mp4";
-            var previewPath = Path.Combine(outputFolder, previewFileName);
-
-            // Create a lower-quality preview for fast loading (scaled & higher CRF)
-            await FFMpegArguments
-                .FromFileInput(inputVideoPath, false)
-                .OutputToFile(previewPath, true, options =>
-                {
-                    options
-                        .WithVideoCodec("libx264")
-                        .WithAudioCodec("aac")
-                        .WithFastStart();
-
-                    // Use custom arguments to reduce quality/size
-                    options.WithCustomArgument("-vf \"scale=640:-2\" -crf 28 -preset veryfast -b:v 512k -b:a 64k");
-                })
-                .ProcessAsynchronously();
-
-            if (File.Exists(previewPath) && new FileInfo(previewPath).Length > 0)
-                return previewPath;
-
-            return null;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error creating preview video: {ex.Message}");
-            return null;
-        }
     }
 }
