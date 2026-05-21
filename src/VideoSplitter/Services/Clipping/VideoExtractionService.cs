@@ -423,11 +423,11 @@ public class VideoExtractionService : IVideoExtractionService
         {
             if (!hasSubtitles) return string.Empty;
             
-            // Escape special characters in file path for FFmpeg
+            // Escape all special characters for FFmpeg filter syntax
             var escapedPath = srtPath!
                 .Replace("\\", "/")
                 .Replace(":", "\\:")
-                .Replace("'", "\\'");
+                .Replace("'", "'\\\\\\''"); // Properly escape apostrophes for FFmpeg
             
             var style = subtitleOptions!.GetFFmpegStyleString();
             var subtitleFilter = $"subtitles='{escapedPath}':force_style='{style}'";
@@ -565,10 +565,12 @@ public class VideoExtractionService : IVideoExtractionService
         var escapedPath = srtPath
             .Replace("\\", "/")
             .Replace(":", "\\:")
-            .Replace("'", "\\'");
+            .Replace("'", "'\\\\\\''"); // Properly escape apostrophes for FFmpeg
 
         var style = subtitleOptions.GetFFmpegStyleString();
-        var subtitleFilter = $"subtitles='{escapedPath}':force_style='{style}'";
+        // Escape commas in the style string so FFMpeg's filter parser doesn't treat them as option separators
+        var escapedStyle = style.Replace(",", "\\,");
+        var subtitleFilter = $"subtitles='{escapedPath}':force_style='{escapedStyle}'";
 
         options.WithCustomArgument($"-vf \"{subtitleFilter}\"");
     }
