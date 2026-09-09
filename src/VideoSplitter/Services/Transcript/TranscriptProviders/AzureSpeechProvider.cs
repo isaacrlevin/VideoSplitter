@@ -39,9 +39,9 @@ public class AzureSpeechProvider : TranscriptProviderBase
 
         // Perform Azure Speech transcription
         var transcriptionResult = await TranscribeAudioAsync(
-            audioPath, 
-            settings.AzureSpeech.AzureSpeechApiKey!, 
-            settings.AzureSpeech.AzureSpeechRegion!, 
+            audioPath,
+            settings.AzureSpeech.AzureSpeechApiKey!,
+            settings.AzureSpeech.AzureSpeechRegion!,
             progress);
 
         if (!transcriptionResult.Success)
@@ -77,7 +77,7 @@ public class AzureSpeechProvider : TranscriptProviderBase
             // Configure Azure Speech
             var speechConfig = SpeechConfig.FromSubscription(apiKey, region);
             speechConfig.SpeechRecognitionLanguage = "en-US";
-            
+
             // Enable detailed results for timestamps
             speechConfig.OutputFormat = OutputFormat.Detailed;
 
@@ -105,13 +105,13 @@ public class AzureSpeechProvider : TranscriptProviderBase
                     // Get offset and duration for timestamps
                     var offset = e.Result.OffsetInTicks;
                     var duration = e.Result.Duration;
-                    
+
                     var startTime = TimeSpan.FromTicks(offset);
                     var endTime = startTime + duration;
-                    
+
                     // Format with timestamps similar to Whisper output
                     transcript.AppendLine($"[{startTime:hh\\:mm\\:ss} -> {endTime:hh\\:mm\\:ss}] {e.Result.Text}");
-                    
+
                     progress?.Report($"Transcribed: {startTime:hh\\:mm\\:ss} -> {endTime:hh\\:mm\\:ss}");
                 }
                 else if (e.Result.Reason == ResultReason.NoMatch)
@@ -132,7 +132,7 @@ public class AzureSpeechProvider : TranscriptProviderBase
                 {
                     progress?.Report("End of audio stream reached");
                 }
-                
+
                 recognitionComplete.TrySetResult(true);
             };
 
@@ -158,7 +158,7 @@ public class AzureSpeechProvider : TranscriptProviderBase
             }
 
             var finalTranscript = transcript.ToString();
-            
+
             if (string.IsNullOrWhiteSpace(finalTranscript))
             {
                 return (false, null, "No speech recognized in the audio file");

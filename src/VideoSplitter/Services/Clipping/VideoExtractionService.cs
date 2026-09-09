@@ -54,6 +54,7 @@ public class VideoExtractionService : IVideoExtractionService
     private readonly IAudioExtractionService _audioExtractionService;
     private readonly ITranscriptService _transcriptService;
     private readonly ISettingsService _settingsService;
+    private readonly ISegmentService _segmentService;
     private readonly HttpClient _httpClient;
 
     // Standard vertical video resolution for TikTok/YouTube Shorts
@@ -61,12 +62,13 @@ public class VideoExtractionService : IVideoExtractionService
     private const int VerticalHeight = 1920;
 
     public VideoExtractionService(
-        IProjectService projectService, 
+        IProjectService projectService,
         IFileStreamService fileStreamService,
         ISubtitleService subtitleService,
         IAudioExtractionService audioExtractionService,
         ITranscriptService transcriptService,
         ISettingsService settingsService,
+        ISegmentService segmentService,
         HttpClient httpClient)
     {
         _projectService = projectService;
@@ -75,6 +77,7 @@ public class VideoExtractionService : IVideoExtractionService
         _audioExtractionService = audioExtractionService;
         _transcriptService = transcriptService;
         _settingsService = settingsService;
+        _segmentService = segmentService;
         _httpClient = httpClient;
     }
 
@@ -98,7 +101,7 @@ public class VideoExtractionService : IVideoExtractionService
         string? tempAudioPath = null;
         string? tempTranscriptPath = null;
         string? tempSrtPath = null;
-        
+
         try
         {
             if (!File.Exists(project.VideoPath))
@@ -127,23 +130,23 @@ public class VideoExtractionService : IVideoExtractionService
                 AspectRatioMode.VerticalLetterbox => "-vertical-letterbox",
                 _ => ""
             };
-            
+
             if (subtitleOptions?.Enabled == true)
             {
                 suffix += "-subtitled";
             }
-            
+
             var fileName = $"{sanitizedProjectName}-{segmentNumber}{suffix}.mp4";
             var outputPath = Path.Combine(clipsFolder, fileName);
 
             // Step 1: Extract the segment WITHOUT subtitles
             var duration = segment.EndTime - segment.StartTime;
-            
+
             if (subtitleOptions?.Enabled == true)
             {
                 // Create temporary video file (without subtitles)
                 tempVideoPath = Path.Combine(clipsFolder, $"{sanitizedProjectName}-{segmentNumber}-temp.mp4");
-                
+
                 progress?.Report(0.1);
                 await FFMpegArguments
                     .FromFileInput(project.VideoPath, false, options => options
@@ -175,7 +178,7 @@ public class VideoExtractionService : IVideoExtractionService
                 // Step 2: Extract audio from the clipped video
                 tempAudioPath = Path.Combine(clipsFolder, $"{sanitizedProjectName}-{segmentNumber}-temp.wav");
                 var audioResult = await _audioExtractionService.ExtractAudioAsync(tempVideoPath, tempAudioPath);
-                
+
                 if (!audioResult.Success)
                 {
                     return new ExtractionResult
@@ -190,20 +193,20 @@ public class VideoExtractionService : IVideoExtractionService
                 // Step 3: Generate transcript from the clipped audio
                 // The audio file is already in the correct format for transcription
                 tempTranscriptPath = Path.Combine(clipsFolder, $"{sanitizedProjectName}-{segmentNumber}-temp.txt");
-                
+
                 // Get current settings to use the configured transcript provider
                 var appSettings = await _settingsService.GetSettingsAsync();
-                
+
                 // Use the TranscriptService provider factory to get the configured provider
                 var transcriptProvider = new TranscriptProviderFactory(_httpClient)
                     .GetProvider(appSettings.TranscriptProvider);
-                
+
                 var transcriptResult = await transcriptProvider.GenerateTranscriptAsync(
                     tempAudioPath,       // Audio path (already in WAV 16KHz mono format)
                     tempTranscriptPath,  // Output transcript path
                     appSettings,
                     new Progress<string>(msg => { /* Progress updates */ }));
-                
+
                 if (!transcriptResult.Success)
                 {
                     return new ExtractionResult
@@ -218,7 +221,7 @@ public class VideoExtractionService : IVideoExtractionService
                 // Step 4: Generate SRT from the new transcript
                 tempSrtPath = Path.Combine(clipsFolder, $"{sanitizedProjectName}-{segmentNumber}-temp.srt");
                 var srtResult = await _subtitleService.GenerateSrtFromWhisperAsync(tempTranscriptPath, tempSrtPath);
-                
+
                 if (!srtResult.Success)
                 {
                     return new ExtractionResult
@@ -226,6 +229,16 @@ public class VideoExtractionService : IVideoExtractionService
                         Success = false,
                         Error = $"Failed to generate SRT file: {srtResult.Error}"
                     };
+                }
+
+                // Step 4.5: Read and store the transcript content in the segment
+                // This preserves the clip-specific transcript for later use (e.g., AI content generation)
+                var clipTranscriptContent = await _transcriptService.ReadTranscriptAsync(tempTranscriptPath);
+                if (!string.IsNullOrWhiteSpace(clipTranscriptContent))
+                {
+                    segment.TranscriptText = clipTranscriptContent;
+                    // Save the updated segment to the database
+                    await _segmentService.UpdateSegmentAsync(segment);
                 }
 
                 progress?.Report(0.8);
@@ -404,36 +417,36 @@ public class VideoExtractionService : IVideoExtractionService
     /// Applies video filters including aspect ratio conversion and subtitle burning.
     /// </summary>
     private static void ApplyVideoFilters(
-        FFMpegArgumentOptions options, 
-        AspectRatioMode mode, 
+        FFMpegArgumentOptions options,
+        AspectRatioMode mode,
         SubtitleOptions? subtitleOptions,
         string? srtPath)
     {
         var hasSubtitles = subtitleOptions?.Enabled == true && !string.IsNullOrEmpty(srtPath) && File.Exists(srtPath);
-        
+
         // Check if SRT file has content (not empty)
         if (hasSubtitles)
         {
             var srtContent = File.ReadAllText(srtPath!);
             hasSubtitles = !string.IsNullOrWhiteSpace(srtContent);
         }
-        
+
         // Build subtitle filter string
         string GetSubtitleFilter(string? outputLabel = null)
         {
             if (!hasSubtitles) return string.Empty;
-            
+
             // Escape all special characters for FFmpeg filter syntax
             var escapedPath = srtPath!
                 .Replace("\\", "/")
                 .Replace(":", "\\:")
                 .Replace("'", "'\\\\\\''"); // Properly escape apostrophes for FFmpeg
-            
+
             var style = subtitleOptions!.GetFFmpegStyleString();
             var subtitleFilter = $"subtitles='{escapedPath}':force_style='{style}'";
-            
-            return outputLabel != null 
-                ? $"{subtitleFilter}[{outputLabel}]" 
+
+            return outputLabel != null
+                ? $"{subtitleFilter}[{outputLabel}]"
                 : subtitleFilter;
         }
 
@@ -496,24 +509,42 @@ public class VideoExtractionService : IVideoExtractionService
             case AspectRatioMode.VerticalStackPodcast:
                 if (hasSubtitles)
                 {
+                    //var podcastSubFilter =
+                    //    $"[0:v]crop=iw*0.90:ih*0.95:iw*0.05:0," +
+                    //    $"crop=iw:ih*0.80:0:ih*0.20,split[left][right];" +
+                    //    $"[left]crop=iw/2:ih:0:0,scale={VerticalWidth}:{VerticalHeight / 2}[top];" +
+                    //    $"[right]crop=iw/2:ih:iw/2:0,scale={VerticalWidth}:{VerticalHeight / 2}[bottom];" +
+                    //    $"[top][bottom]vstack,{GetSubtitleFilter()}";
+
                     var podcastSubFilter =
-                        $"[0:v]crop=iw*0.90:ih*0.95:iw*0.05:0," +
-                        $"crop=iw:ih*0.80:0:ih*0.20,split[left][right];" +
-                        $"[left]crop=iw/2:ih:0:0,scale={VerticalWidth}:{VerticalHeight / 2}[top];" +
-                        $"[right]crop=iw/2:ih:iw/2:0,scale={VerticalWidth}:{VerticalHeight / 2}[bottom];" +
-                        $"[top][bottom]vstack,{GetSubtitleFilter()}";
+                        $"crop=w=iw*.85:h=ih*.8:y=ih-110," +
+                        $"crop=h=ih-100:y=0,split[left][right];" +
+                        $"[left]crop=w=iw-975:x=0,scale={VerticalWidth}:{VerticalHeight / 2}[top];" +
+                        $"[right]crop=w=iw-975:x=iw,scale={VerticalWidth}:{VerticalHeight / 2}[bottom];" +
+                        $"[top][bottom]vstack,{ GetSubtitleFilter()}";
                     options.WithCustomArgument($"-filter_complex \"{podcastSubFilter}\"");
                 }
                 else
                 {
+                    //var podcastFilter =
+                    //    $"[0:v]crop=iw*0.90:ih*0.95:iw*0.05:0," +
+                    //    $"crop=iw:ih*0.80:0:ih*0.20,split[left][right];" +
+                    //    $"[left]crop=iw/2:ih:0:0,scale={VerticalWidth}:{VerticalHeight / 2}[top];" +
+                    //    $"[right]crop=iw/2:ih:iw/2:0,scale={VerticalWidth}:{VerticalHeight / 2}[bottom];" +
+                    //    $"[top][bottom]vstack";
+
                     var podcastFilter =
-                        $"[0:v]crop=iw*0.90:ih*0.95:iw*0.05:0," +
-                        $"crop=iw:ih*0.80:0:ih*0.20,split[left][right];" +
-                        $"[left]crop=iw/2:ih:0:0,scale={VerticalWidth}:{VerticalHeight / 2}[top];" +
-                        $"[right]crop=iw/2:ih:iw/2:0,scale={VerticalWidth}:{VerticalHeight / 2}[bottom];" +
+                        $"crop=w=iw*.85:h=ih*.8:y=ih-110," +
+                        $"crop=h=ih-100:y=0,split[left][right];" +
+                        $"[left]crop=w=iw-975:x=0,scale={VerticalWidth}:{VerticalHeight / 2}[top];" +
+                        $"[right]crop=w=iw-975:x=iw,scale={VerticalWidth}:{VerticalHeight / 2}[bottom];" +
                         $"[top][bottom]vstack";
                     options.WithCustomArgument($"-filter_complex \"{podcastFilter}\"");
                 }
+
+
+
+
                 break;
 
             case AspectRatioMode.VerticalLetterbox:

@@ -17,7 +17,7 @@
             <div class="card-body">
                 <EditForm Model="@newProject" OnSubmit="@CreateProject">
                     <DataAnnotationsValidator />
-                    
+
                     <div class="mb-3">
                         <label for="projectName" class="form-label">Project Name *</label>
                         <InputText @bind-Value="newProject.Name" class="form-control" id="projectName" placeholder="e.g., Tech Talk Episode 15" />
@@ -172,7 +172,7 @@
                 });
 
                 var result = await VideoService.DownloadYouTubeVideoAsync(youTubeUrl, tempFolder, progress);
-                
+
                 if (!result.Success || string.IsNullOrEmpty(result.FilePath))
                 {
                     youTubeError = result.Error ?? "Failed to download video";
@@ -228,21 +228,39 @@
                 var projectFolder = await ProjectService.CreateProjectFolderAsync(createdProject.Id);
                 var thumbnailPosition = TimeSpan.FromSeconds(newProject.Duration.Value.TotalSeconds / 2);
                 var thumbnailPath = await VideoService.GenerateThumbnailAsync(videoPath, projectFolder, thumbnailPosition);
-                
+
                 if (!string.IsNullOrEmpty(thumbnailPath))
                 {
                     createdProject.ThumbnailPath = thumbnailPath;
                     await ProjectService.UpdateProjectAsync(createdProject);
                 }
-            }
 
-            // Navigate to project page
-            Navigation.NavigateTo($"/project/{createdProject.Id}");
+                // Create low-quality preview for faster loading in embedded player
+                try
+                {
+                    var tempFolder = Path.Combine(projectFolder, "temp");
+                    Directory.CreateDirectory(tempFolder);
+
+                    var previewPath = await VideoService.CreatePreviewVideoAsync(videoPath, tempFolder);
+                    if (!string.IsNullOrEmpty(previewPath) && File.Exists(previewPath))
+                    {
+                        createdProject.PreviewVideoPath = previewPath;
+                        await ProjectService.UpdateProjectAsync(createdProject);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Preview creation failed: {ex.Message}");
+                }
+
+                // Navigate to project page
+                Navigation.NavigateTo($"/project/{createdProject.Id}");
+            }
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Error creating project: {ex.Message}");
-            
+
             // Provide more specific error messages
             string errorMessage = "Failed to create project. Please try again.";
             if (ex.Message.Contains("cipher") || ex.Message.Contains("decrypt"))
@@ -258,7 +276,7 @@
             {
                 fileError = ex.Message.Contains("file") ? ex.Message : $"File processing error: {ex.Message}";
             }
-            
+
             await JSRuntime.InvokeVoidAsync("alert", errorMessage);
         }
         finally
@@ -284,7 +302,7 @@
         // Basic file extension validation
         var allowedExtensions = new[] { ".mp4", ".avi", ".mov", ".mkv", ".wmv", ".webm", ".m4v" };
         var extension = Path.GetExtension(selectedFile.Name).ToLowerInvariant();
-        
+
         if (!allowedExtensions.Contains(extension))
         {
             fileError = "Please select a valid video file";
@@ -295,7 +313,7 @@
     private bool CanSubmit()
     {
         if (string.IsNullOrWhiteSpace(newProject.Name)) return false;
-        
+
         if (isYouTubeSource)
         {
             return !string.IsNullOrWhiteSpace(youTubeUrl) && string.IsNullOrEmpty(youTubeError);

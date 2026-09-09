@@ -192,10 +192,10 @@ public class FileStreamService : IFileStreamService
                 $"[top][bottom]vstack",
             
             AspectRatioMode.VerticalStackPodcast => 
-                $"crop=iw*0.90:ih*0.95:iw*0.05:0," +
-                $"crop=iw:ih*0.80:0:ih*0.20,split[left][right];" +
-                $"[left]crop=iw/2:ih:0:0,scale={PreviewVerticalWidth}:{PreviewVerticalHeight / 2}[top];" +
-                $"[right]crop=iw/2:ih:iw/2:0,scale={PreviewVerticalWidth}:{PreviewVerticalHeight / 2}[bottom];" +
+                $"crop=w=iw*.85:h=ih*.8:y=ih-110," +
+                $"crop=h=ih-100:y=0,split[left][right];" +
+                $"[left]crop=w=iw-975:x=0,scale={PreviewVerticalWidth}:{PreviewVerticalHeight / 2}[top];" +
+                $"[right]crop=w=iw-975:x=iw,scale={PreviewVerticalWidth}:{PreviewVerticalHeight / 2}[bottom];" +
                 $"[top][bottom]vstack",
             
             AspectRatioMode.VerticalLetterbox => 

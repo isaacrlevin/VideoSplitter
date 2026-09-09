@@ -15,7 +15,8 @@ public class Project
     
     [Required]
     public string VideoPath { get; set; } = string.Empty;
-    
+
+    public string? PreviewVideoPath { get; set; }
     public string? YouTubeUrl { get; set; }
     
     public string? ThumbnailPath { get; set; }

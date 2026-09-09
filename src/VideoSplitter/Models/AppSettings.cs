@@ -2,6 +2,9 @@ namespace VideoSplitter.Models;
 
 public class AppSettings
 {
+    // Appearance Settings
+    public bool UseDarkMode { get; set; }
+
     // Transcript Settings
     public TranscriptProvider TranscriptProvider { get; set; } = TranscriptProvider.Local;
 

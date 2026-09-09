@@ -1,4 +1,7 @@
-﻿@inherits LayoutComponentBase
+﻿@using VideoSplitter.Models
+@inherits LayoutComponentBase
+@inject AppSettings AppSettings
+@inject IJSRuntime JSRuntime
 
 <div class="page">
     <div class="sidebar">
@@ -7,6 +10,7 @@
                 <div class="logo-icon">
                     <img src="images/logo.png" alt="VideoSplitter Logo" class="app-logo" />
                 </div>
+
                 <div class="logo-text">
                     <h3>VideoSplitter</h3>
                     <p class="version">AI-Powered Editor</p>
@@ -69,3 +73,15 @@
         </article>
     </main>
 </div>
+
+@code {
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        await JSRuntime.InvokeVoidAsync("appTheme.apply", ThemeHelper.GetCssTheme(AppSettings.UseDarkMode));
+    }
+}

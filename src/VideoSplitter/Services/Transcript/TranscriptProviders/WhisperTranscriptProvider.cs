@@ -20,7 +20,8 @@ public class WhisperTranscriptProvider : TranscriptProviderBase, IDisposable
     {
         ["ggml-base.bin"] = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
         ["ggml-small.bin"] = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
-        ["ggml-tiny.bin"] = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin"
+        ["ggml-tiny.bin"] = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
+        ["ggml-large-v3.bin"] = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin"
     };
 
     public WhisperTranscriptProvider(HttpClient httpClient)
@@ -109,7 +110,7 @@ public class WhisperTranscriptProvider : TranscriptProviderBase, IDisposable
             }
 
             // Download the base model (around 142MB)
-            var modelFileName = "ggml-base.bin";
+            var modelFileName = "ggml-large-v3.bin";
             var downloadUrl = _modelUrls[modelFileName];
 
             progress?.Report($"Downloading {modelFileName} from Hugging Face...");
@@ -226,9 +227,9 @@ public class WhisperTranscriptProvider : TranscriptProviderBase, IDisposable
                 // Try alternative locations
                 var alternativePaths = new[]
                 {
-                    Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ggml-base.bin"),
-                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "whisper", "ggml-base.bin"),
-                    "ggml-base.bin" // Current directory
+                    Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ggml-large-v3.bin"),
+                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "whisper", "ggml-large-v3.bin"),
+                    "ggml-large-v3.bin" // Current directory
                 };
 
                 foreach (var altPath in alternativePaths)
@@ -256,7 +257,7 @@ public class WhisperTranscriptProvider : TranscriptProviderBase, IDisposable
     /// </summary>
     public string GetExpectedModelPath()
     {
-        return Path.Combine(FileSystem.Current.AppDataDirectory, "ggml-base.bin");
+        return Path.Combine(FileSystem.Current.AppDataDirectory, "ggml-large-v3.bin");
     }
 
     private async Task<WhisperFactory> GetWhisperFactoryAsync()
@@ -267,16 +268,16 @@ public class WhisperTranscriptProvider : TranscriptProviderBase, IDisposable
         try
         {
             // Check for model in app data directory first
-            var modelPath = Path.Combine(FileSystem.Current.AppDataDirectory, "ggml-base.bin");
+            var modelPath = Path.Combine(FileSystem.Current.AppDataDirectory, "ggml-large-v3.bin");
 
             if (!File.Exists(modelPath))
             {
                 // Try common model locations
                 var alternativePaths = new[]
                 {
-                    Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ggml-base.bin"),
-                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "whisper", "ggml-base.bin"),
-                    "ggml-base.bin" // Current directory
+                    Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ggml-large-v3.bin"),
+                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "whisper", "ggml-large-v3.bin"),
+                    "ggml-large-v3.bin" // Current directory
                 };
 
                 foreach (var altPath in alternativePaths)
@@ -292,7 +293,7 @@ public class WhisperTranscriptProvider : TranscriptProviderBase, IDisposable
                 {
                     throw new FileNotFoundException(
                         "Whisper model not found. Please use the Settings page to download the model. " +
-                        $"Expected location: {Path.Combine(FileSystem.Current.AppDataDirectory, "ggml-base.bin")}");
+                        $"Expected location: {Path.Combine(FileSystem.Current.AppDataDirectory, "ggml-large-v3.bin")}");
                 }
             }
 

@@ -80,10 +80,11 @@ public abstract class LlmProviderBase : ILlmProvider
 
             var chatOptions = new ChatOptions
             {
-                Temperature = 0.1f,
+                //Temperature = 0.1f,
                 //Temperature = 0.0f,
-                TopP = 0.9f,
-                MaxOutputTokens = 4000                
+                //TopP = 0.9f,
+                //MaxOutputTokens = 4000  
+                
             };
 
 

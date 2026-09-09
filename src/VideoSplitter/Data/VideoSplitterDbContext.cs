@@ -25,6 +25,7 @@ public class VideoSplitterDbContext : DbContext
             entity.Property(e => e.VideoPath).HasMaxLength(500);
             entity.Property(e => e.YouTubeUrl).HasMaxLength(500);
             entity.Property(e => e.ThumbnailPath).HasMaxLength(500);
+            entity.Property(e => e.PreviewVideoPath).HasMaxLength(500);
             entity.Property(e => e.TranscriptPath).HasMaxLength(500);
             
             // Configure TimeSpan conversion for Duration property

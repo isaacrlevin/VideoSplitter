@@ -1,10 +1,13 @@
-﻿namespace VideoSplitter
+﻿using VideoSplitter.Models;
+
+namespace VideoSplitter
 {
     public partial class App : Application
     {
-        public App()
+        public App(AppSettings settings)
         {
             InitializeComponent();
+            ThemeHelper.ApplyTheme(settings.UseDarkMode);
         }
 
         protected override Window CreateWindow(IActivationState? activationState)
