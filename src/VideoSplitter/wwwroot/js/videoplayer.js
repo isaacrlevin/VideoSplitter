@@ -341,10 +341,10 @@ window.getCurrentVideoTime = () => {
 };
 
 
-// Edit Segment Video Player Functions
-window.initializeEditSegmentVideoPlayer = (dotNetObjectRef) => {
-    const video = document.getElementById('editSegmentVideoPlayer');
-    const currentTimeDisplay = document.getElementById('editSegmentCurrentTime');
+// Segment Modal Video Player Functions (shared by the edit and custom segment modals)
+const initializeSegmentModalPlayer = (videoId, currentTimeDisplayId) => {
+    const video = document.getElementById(videoId);
+    const currentTimeDisplay = document.getElementById(currentTimeDisplayId);
 
     if (video) {
         // Handle video source initialization
@@ -370,28 +370,28 @@ window.initializeEditSegmentVideoPlayer = (dotNetObjectRef) => {
 
         // Handle video load errors
         video.addEventListener('error', (e) => {
-            console.error('Edit segment video load error:', e);
+            console.error(`Segment modal video load error (${videoId}):`, e);
         });
     }
 };
 
-window.seekEditSegmentVideoToTime = (seconds) => {
-    const video = document.getElementById('editSegmentVideoPlayer');
+const seekSegmentModalPlayerToTime = (videoId, seconds) => {
+    const video = document.getElementById(videoId);
     if (video) {
         video.currentTime = seconds;
     }
 };
 
-window.getEditSegmentVideoTime = () => {
-    const video = document.getElementById('editSegmentVideoPlayer');
+const getSegmentModalPlayerTime = (videoId) => {
+    const video = document.getElementById(videoId);
     if (video) {
         return video.currentTime;
     }
     return 0;
 };
 
-window.playEditSegmentRange = (startSeconds, endSeconds) => {
-    const video = document.getElementById('editSegmentVideoPlayer');
+const playSegmentModalRange = (videoId, startSeconds, endSeconds) => {
+    const video = document.getElementById(videoId);
     if (video) {
         // Seek to start time
         video.currentTime = startSeconds;
@@ -412,6 +412,32 @@ window.playEditSegmentRange = (startSeconds, endSeconds) => {
         video.addEventListener('timeupdate', stopAtEnd);
     }
 };
+
+// Edit Segment Video Player Functions
+window.initializeEditSegmentVideoPlayer = () =>
+    initializeSegmentModalPlayer('editSegmentVideoPlayer', 'editSegmentCurrentTime');
+
+window.seekEditSegmentVideoToTime = (seconds) =>
+    seekSegmentModalPlayerToTime('editSegmentVideoPlayer', seconds);
+
+window.getEditSegmentVideoTime = () =>
+    getSegmentModalPlayerTime('editSegmentVideoPlayer');
+
+window.playEditSegmentRange = (startSeconds, endSeconds) =>
+    playSegmentModalRange('editSegmentVideoPlayer', startSeconds, endSeconds);
+
+// Custom Segment Video Player Functions
+window.initializeCustomSegmentVideoPlayer = () =>
+    initializeSegmentModalPlayer('customSegmentVideoPlayer', 'customSegmentCurrentTime');
+
+window.seekCustomSegmentVideoToTime = (seconds) =>
+    seekSegmentModalPlayerToTime('customSegmentVideoPlayer', seconds);
+
+window.getCustomSegmentVideoTime = () =>
+    getSegmentModalPlayerTime('customSegmentVideoPlayer');
+
+window.playCustomSegmentRange = (startSeconds, endSeconds) =>
+    playSegmentModalRange('customSegmentVideoPlayer', startSeconds, endSeconds);
 
 window.downloadFile = (fileName, base64Data) => {
     try {

@@ -80,6 +80,7 @@ namespace VideoSplitter
             {
                 var context = scope.ServiceProvider.GetRequiredService<VideoSplitterDbContext>();
                 context.Database.EnsureCreated();
+                context.EnsureAddedColumnsExist();
             }
 
             return app;

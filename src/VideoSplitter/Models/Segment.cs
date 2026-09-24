@@ -28,7 +28,14 @@ public class Segment
     public SegmentStatus Status { get; set; } = SegmentStatus.Generated;
     
     public string? ClipPath { get; set; }
-    
+
+    // Reusable publishing copy - generated/edited once, then used for any social channel
+    public string? PostTitle { get; set; }
+
+    public string? PostDescription { get; set; }
+
+    public string? PostHashtags { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

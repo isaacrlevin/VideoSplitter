@@ -16,7 +16,6 @@ public class AiService : IAiService
     }
     public async Task<(bool Success, string? Title, string? Description, string? Error)> GenerateSocialMediaContentAsync(
        string transcriptContent,
-       string platformName,
        AppSettings settings,
        IProgress<string>? progress = null)
     {
@@ -50,9 +49,11 @@ public class AiService : IAiService
                 ? transcriptContent.Substring(0, 5000) + "..."
                 : transcriptContent;
 
-            var systemPrompt = $$"""
-You are a social media expert specializing in creating engaging content for {{platformName}}.
+            var systemPrompt = """
+You are a social media expert specializing in engaging short-form video content.
 Your task is to generate a catchy title and compelling description based on video transcripts.
+The copy will be reused across several platforms (TikTok, Instagram Reels, YouTube Shorts), so keep
+it platform-neutral: no platform names, no references to platform-specific features, and no hashtags.
 The title should be attention-grabbing and concise (max 150 characters).
 The description should be engaging and informative (max 500 characters).
 Respond ONLY with valid JSON in this exact format:
@@ -63,7 +64,7 @@ Respond ONLY with valid JSON in this exact format:
 """;
 
             var userPrompt = $$"""
-Based on this video segment transcript, generate an engaging title and description for {{platformName}}:
+Based on this video segment transcript, generate an engaging title and description:
 
 {{safeTranscript}}
 

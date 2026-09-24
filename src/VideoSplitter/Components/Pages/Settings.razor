@@ -68,6 +68,16 @@ else
                             @if (settings.TranscriptProvider == TranscriptProvider.Local)
                             {
                                 <div class="mb-3">
+                                    <label class="form-label">Whisper Model Size</label>
+                                    <InputSelect @bind-Value="settings.Whisper.ModelSize" class="form-select" @onchange="OnWhisperModelSizeChanged">
+                                        <option value="@WhisperModelSize.Tiny">Tiny (~75MB, fastest, least accurate)</option>
+                                        <option value="@WhisperModelSize.Base">Base (~142MB, balanced)</option>
+                                        <option value="@WhisperModelSize.Small">Small (~466MB, more accurate)</option>
+                                        <option value="@WhisperModelSize.Large">Large (~2.9GB, most accurate, slowest)</option>
+                                    </InputSelect>
+                                    <div class="small text-muted mt-1">Larger models produce more accurate transcripts but take longer to download and run.</div>
+                                </div>
+                                <div class="mb-3">
                                     <label class="form-label">Whisper Model Status</label>
                                     <div class="d-flex align-items-center">
                                         <button class="btn btn-outline-primary btn-sm me-2" type="button" @onclick="CheckWhisperStatus">
@@ -103,7 +113,7 @@ else
                                                 <h6 class="alert-heading">Whisper Model Required</h6>
                                                 <p class="mb-2">The Whisper.NET model is required for local transcription. The application can automatically download the model for you.</p>
                                                 <button class="btn btn-primary btn-sm" type="button" @onclick="DownloadWhisperModel">
-                                                    <span class="oi oi-cloud-download"></span> Download Model (~142MB)
+                                                    <span class="oi oi-cloud-download"></span> Download Model
                                                 </button>
                                             </div>
                                         </div>
@@ -906,15 +916,26 @@ else
         }
     }
 
+    private async Task OnWhisperModelSizeChanged(ChangeEventArgs e)
+    {
+        if (settings != null && e.Value != null && Enum.TryParse<WhisperModelSize>(e.Value.ToString(), out var modelSize))
+        {
+            settings.Whisper.ModelSize = modelSize;
+            await CheckWhisperStatus();
+        }
+    }
+
     private async Task CheckWhisperStatus()
     {
+        if (settings == null) return;
+
         checkingWhisper = true;
         whisperStatusMessage = string.Empty;
         StateHasChanged();
 
         try
         {
-            var status = await TranscriptService.GetModelStatusAsync();
+            var status = await TranscriptService.GetModelStatusAsync(settings.Whisper.ModelSize);
 
             whisperModelAvailable = status.IsAvailable;
             whisperModelDownloading = status.IsDownloading;
@@ -922,7 +943,7 @@ else
 
             if (!status.IsAvailable && !status.IsDownloading)
             {
-                whisperStatusMessage = $"Expected location: {TranscriptService.GetExpectedModelPath()}";
+                whisperStatusMessage = $"Expected location: {TranscriptService.GetExpectedModelPath(settings.Whisper.ModelSize)}";
             }
         }
         catch (Exception ex)
@@ -941,6 +962,8 @@ else
 
     private async Task DownloadWhisperModel()
     {
+        if (settings == null) return;
+
         whisperModelDownloading = true;
         whisperDownloadProgress = "Starting download...";
         StateHasChanged();
@@ -953,7 +976,7 @@ else
                 InvokeAsync(StateHasChanged);
             });
 
-            var result = await TranscriptService.DownloadWhisperModelAsync(progress);
+            var result = await TranscriptService.DownloadWhisperModelAsync(settings.Whisper.ModelSize, progress);
 
             if (result.Success)
             {
@@ -985,6 +1008,8 @@ else
 
     private async Task InitializeWhisperModel()
     {
+        if (settings == null) return;
+
         checkingWhisper = true;
         whisperStatusMessage = "Initializing model...";
         StateHasChanged();
@@ -997,7 +1022,7 @@ else
                 InvokeAsync(StateHasChanged);
             });
 
-            var result = await TranscriptService.InitializeWhisperModelAsync(progress);
+            var result = await TranscriptService.InitializeWhisperModelAsync(settings.Whisper.ModelSize, progress);
 
             if (result.Success)
             {

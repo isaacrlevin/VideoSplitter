@@ -10,9 +10,12 @@ public interface IAiService
         AppSettings settings,
         IProgress<string>? progress = null);
 
+    /// <summary>
+    /// Generates a channel-neutral title and description that can be reused for every social
+    /// platform the clip is posted to.
+    /// </summary>
     Task<(bool Success, string? Title, string? Description, string? Error)> GenerateSocialMediaContentAsync(
    string transcriptContent,
-   string platformName,
    AppSettings settings,
    IProgress<string>? progress = null);
 }

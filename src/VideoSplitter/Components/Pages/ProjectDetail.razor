@@ -96,6 +96,131 @@ else
         </div>
     }
 
+    <!-- Post Description Modal - write the copy once, then pick a channel to post to -->
+    @if (showDescriptionModal && selectedSegmentForDescription != null)
+    {
+        <div class="modal show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">
+                            <span class="oi oi-document me-2"></span>
+                            Post Description
+                        </h5>
+                        <button type="button" class="btn-close" @onclick="CloseDescriptionDialog" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <h6 class="mb-1">@FormatDuration(selectedSegmentForDescription.StartTime) - @FormatDuration(selectedSegmentForDescription.EndTime)</h6>
+                            <p class="text-muted small mb-0">@selectedSegmentForDescription.Summary</p>
+                        </div>
+
+                        <div class="alert alert-info py-2">
+                            <small>
+                                <span class="oi oi-info me-1"></span>
+                                This copy is saved with the clip and reused for every channel you post to. Tweaks you
+                                make in the posting dialog apply to that post only.
+                            </small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Title *</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" @bind="descriptionTitle" maxlength="150" placeholder="Enter a catchy title..." />
+                                <button type="button" class="btn btn-outline-primary" @onclick="GenerateSocialMediaContent" disabled="@isGeneratingContent">
+                                    @if (isGeneratingContent)
+                                    {
+                                        <span class="spinner-border spinner-border-sm" role="status"></span>
+                                    }
+                                    else
+                                    {
+                                        <span class="oi oi-cog"></span>
+                                    }
+                                    Generate
+                                </button>
+                            </div>
+                            <small class="text-muted">@descriptionTitle.Length / 150 characters</small>
+                            @if (!string.IsNullOrEmpty(contentGenerationError))
+                            {
+                                <div class="alert alert-warning mt-2 mb-0 py-1 px-2">
+                                    <small>@contentGenerationError</small>
+                                </div>
+                            }
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Description</label>
+                            <textarea class="form-control" @bind="descriptionBody" rows="5" maxlength="2200" placeholder="Add a description..."></textarea>
+                            <small class="text-muted">@(descriptionBody?.Length ?? 0) / 2200 characters</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Hashtags</label>
+                            <input type="text" class="form-control" @bind="descriptionHashtags" maxlength="500" placeholder="viral, shorts, trending (comma separated)" />
+                            <small class="text-muted">Enter hashtags separated by commas (without # symbol)</small>
+                        </div>
+
+                        @if (!string.IsNullOrEmpty(descriptionSaveError))
+                        {
+                            <div class="alert alert-danger py-2">
+                                <span class="oi oi-warning me-2"></span>@descriptionSaveError
+                            </div>
+                        }
+
+                        @if (availablePublishers.Any())
+                        {
+                            <hr />
+                            <label class="form-label fw-bold">Post to</label>
+                            @if (string.IsNullOrWhiteSpace(descriptionTitle))
+                            {
+                                <p class="text-muted small mb-2">Add a title to continue to posting.</p>
+                            }
+                            <div class="d-flex flex-wrap gap-2">
+                                @foreach (var publisher in availablePublishers)
+                                {
+                                    <button type="button" class="btn btn-outline-primary btn-sm"
+                                            @onclick="() => StartPostFromDescription(publisher.PlatformName)"
+                                            disabled="@(isSavingDescription || string.IsNullOrWhiteSpace(descriptionTitle))">
+                                        <i class="@publisher.PlatformIcon me-2"></i>Post to @publisher.PlatformName
+                                        @if (publisherAuthStatus.TryGetValue(publisher.PlatformName, out var isAuth) && isAuth)
+                                        {
+                                            <span class="badge bg-success ms-2">Connected</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge bg-secondary ms-2">Not Connected</span>
+                                        }
+                                    </button>
+                                }
+                            </div>
+                        }
+                    </div>
+                    <div class="modal-footer">
+                        @if (!string.IsNullOrEmpty(descriptionSaveStatus))
+                        {
+                            <small class="text-success me-auto">
+                                <span class="oi oi-check me-1"></span>@descriptionSaveStatus
+                            </small>
+                        }
+                        <button type="button" class="btn btn-secondary" @onclick="CloseDescriptionDialog" disabled="@isSavingDescription">Close</button>
+                        <button type="button" class="btn btn-primary" @onclick="SaveDescription" disabled="@isSavingDescription">
+                            @if (isSavingDescription)
+                            {
+                                <span class="spinner-border spinner-border-sm" role="status"></span>
+                                <span> Saving...</span>
+                            }
+                            else
+                            {
+                                <span class="oi oi-check"></span>
+                                <span> Save</span>
+                            }
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
     <!-- Social Media Post Modal -->
     @if (showPostModal && selectedSegmentForPost != null)
     {
@@ -158,39 +283,20 @@ else
                                     </div>
                                 }
 
-                                @if (!string.IsNullOrEmpty(project?.TranscriptPath))
-                                {
-                                    <div class="alert alert-info py-2">
-                                        <small>
-                                            <span class="oi oi-info me-1"></span>
-                                            <strong>Tip:</strong> Click the "Generate" button next to the title to automatically create an AI-powered title and description based on your video transcript.
-                                        </small>
-                                    </div>
-                                }
+                                <div class="alert alert-info py-2">
+                                    <small>
+                                        <span class="oi oi-info me-1"></span>
+                                        Prefilled from this clip's saved description. Edits here apply to this
+                                        @selectedPlatformName post only - use
+                                        <a href="#" @onclick="BackToDescription" @onclick:preventDefault="true">Edit description</a>
+                                        to change the copy reused across channels.
+                                    </small>
+                                </div>
 
                                 <div class="mb-3">
                                     <label class="form-label fw-bold">Title *</label>
-                                    <div class="input-group">
-                                        <input type="text" class="form-control" @bind="postTitle" maxlength="150" placeholder="Enter a catchy title..." />
-                                        <button type="button" class="btn btn-outline-primary" @onclick="GenerateSocialMediaContent" disabled="@(isGeneratingContent || isPublishing)">
-                                            @if (isGeneratingContent)
-                                            {
-                                                <span class="spinner-border spinner-border-sm" role="status"></span>
-                                            }
-                                            else
-                                            {
-                                                <span class="oi oi-cog"></span>
-                                            }
-                                            Generate
-                                        </button>
-                                    </div>
+                                    <input type="text" class="form-control" @bind="postTitle" maxlength="150" placeholder="Enter a catchy title..." />
                                     <small class="text-muted">@postTitle.Length / 150 characters</small>
-                                    @if (!string.IsNullOrEmpty(contentGenerationError))
-                                    {
-                                        <div class="alert alert-warning mt-2 mb-0 py-1 px-2">
-                                            <small>@contentGenerationError</small>
-                                        </div>
-                                    }
                                 </div>
 
                                 <div class="mb-3">
@@ -275,6 +381,9 @@ else
                         }
                     </div>
                     <div class="modal-footer">
+                        <button type="button" class="btn btn-outline-secondary me-auto" @onclick="BackToDescription" disabled="@isPublishing">
+                            <span class="oi oi-arrow-left"></span> Description
+                        </button>
                         <button type="button" class="btn btn-secondary" @onclick="ClosePostDialog" disabled="@isPublishing">Cancel</button>
                         @if (publisherAuthStatus.TryGetValue(selectedPlatformName, out var authStatus) && authStatus && (videoValidationResult?.IsValid ?? false))
                         {
@@ -605,223 +714,112 @@ else
         </div>
     }
 
-    <!-- Custom Clip Extraction Options Modal -->
-    @if (showCustomClipOptionsModal)
+    <!-- Custom Segment Modal -->
+    @if (showCustomSegmentModal && project != null)
     {
-        var startTs = ParseTimeSpan(customClipStartTime);
-        var endTs = ParseTimeSpan(customClipEndTime);
-
         <div class="modal show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
             <div class="modal-dialog modal-dialog-centered modal-lg">
                 <div class="modal-content">
                     <div class="modal-header">
                         <h5 class="modal-title">
                             <span class="oi oi-scissors me-2"></span>
-                            Custom Clip Options
+                            Generate Custom Segment
                         </h5>
-                        <button type="button" class="btn-close" @onclick="CancelCustomClipExtraction" aria-label="Close"></button>
+                        <button type="button" class="btn-close" @onclick="CancelCustomSegment" aria-label="Close"></button>
                     </div>
                     <div class="modal-body">
-                        <div class="mb-4">
-                            <h6>Clip: @customClipStartTime - @customClipEndTime</h6>
-                            @if (startTs.HasValue && endTs.HasValue)
-                            {
-                                <p class="text-muted small">Duration: @FormatDuration(endTs.Value - startTs.Value)</p>
-                            }
+                        <div class="alert alert-info mb-3">
+                            <span class="oi oi-info me-2"></span>
+                            <small>Use the preview player below to find exact timestamps. Play the segment to check your times before saving.</small>
                         </div>
 
-                        <!-- Aspect Ratio Selection -->
-                        <div class="mb-4">
-                            <label class="form-label fw-bold">Aspect Ratio</label>
-                            <select class="form-select" @bind="customClipAspectRatioMode" @bind:after="OnCustomClipAspectRatioChanged">
-                                <option value="@AspectRatioMode.Original">Original</option>
-                                <option value="@AspectRatioMode.VerticalCrop">Vertical (9:16) - Center Crop</option>
-                                <option value="@AspectRatioMode.VerticalBlurBackground">Vertical (9:16) - Blurred Background</option>
-                                <option value="@AspectRatioMode.VerticalStackSplitScreen">Vertical (9:16) - Stack Split Screen</option>
-                                <option value="@AspectRatioMode.VerticalStackPodcast">Vertical (9:16) - Podcast Layout</option>
-                                <option value="@AspectRatioMode.VerticalLetterbox">Vertical (9:16) - Letterbox</option>
-                            </select>
-                            @if (!string.IsNullOrEmpty(customClipPreviewFrameBase64) && customClipPreviewAspectRatioMode != customClipAspectRatioMode)
-                            {
-                                <small class="text-info">
-                                    <span class="oi oi-info"></span> Aspect ratio changed - click "Generate Preview" to update
-                                </small>
-                            }
-                        </div>
-
-                        <!-- Subtitle Options -->
-                        <div class="mb-3">
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="enableCustomClipSubtitles" @bind="customClipSubtitleOptions.Enabled">
-                                <label class="form-check-label fw-bold" for="enableCustomClipSubtitles">Burn-in Subtitles</label>
-                            </div>
-                            @if (string.IsNullOrEmpty(project?.TranscriptPath))
-                            {
-                                <small class="text-warning">
-                                    <span class="oi oi-warning"></span> No transcript available. Generate a transcript first to enable subtitles.
-                                </small>
-                            }
-                        </div>
-
-                        @if (customClipSubtitleOptions.Enabled && !string.IsNullOrEmpty(project?.TranscriptPath))
-                        {
-                            <div class="card bg-light">
-                                <div class="card-body">
-                                    <div class="row">
-                                        <div class="col-md-6">
-                                            <!-- Font Settings -->
-                                            <div class="mb-3">
-                                                <label class="form-label">Font</label>
-                                                <select class="form-select form-select-sm" @bind="customClipSubtitleOptions.FontName">
-                                                    <option value="Arial">Arial</option>
-                                                    <option value="Helvetica">Helvetica</option>
-                                                    <option value="Verdana">Verdana</option>
-                                                    <option value="Impact">Impact</option>
-                                                    <option value="Georgia">Georgia</option>
-                                                    <option value="Times New Roman">Times New Roman</option>
-                                                    <option value="Courier New">Courier New</option>
-                                                </select>
-                                            </div>
-
-                                            <div class="mb-3">
-                                                <label class="form-label">Font Size: @customClipSubtitleOptions.FontSize</label>
-                                                <input type="range" class="form-range" min="8" max="48" step="2"
-                                                       value="@customClipSubtitleOptions.FontSize"
-                                                       @onchange="@(e => customClipSubtitleOptions.FontSize = int.Parse(e.Value?.ToString() ?? "24"))">
-                                            </div>
-
-                                            <div class="mb-3">
-                                                <label class="form-label">Position</label>
-                                                <select class="form-select form-select-sm" @bind="customClipSubtitleOptions.Position">
-                                                    <option value="@SubtitlePosition.Bottom">Bottom</option>
-                                                    <option value="@SubtitlePosition.Middle">Middle</option>
-                                                    <option value="@SubtitlePosition.Top">Top</option>
-                                                </select>
-                                            </div>
-
-                                            <div class="mb-3">
-                                                <label class="form-label">Vertical Margin: @customClipSubtitleOptions.MarginVertical px</label>
-                                                <input type="range" class="form-range" min="10" max="200" step="10"
-                                                       value="@customClipSubtitleOptions.MarginVertical"
-                                                       @onchange="@(e => customClipSubtitleOptions.MarginVertical = int.Parse(e.Value?.ToString() ?? "50"))">
-                                            </div>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <!-- Color Settings -->
-                                            <div class="mb-3">
-                                                <label class="form-label">Text Color</label>
-                                                <div class="input-group input-group-sm">
-                                                    <span class="input-group-text">#</span>
-                                                    <input type="text" class="form-control" @bind="customClipSubtitleOptions.PrimaryColor" maxlength="6" placeholder="FFFFFF">
-                                                    <input type="color" class="form-control form-control-color" value="@("#" + customClipSubtitleOptions.PrimaryColor)"
-                                                           @onchange="@(e => customClipSubtitleOptions.PrimaryColor = e.Value?.ToString()?.TrimStart('#') ?? "FFFFFF")" style="max-width: 50px;">
-                                                </div>
-                                            </div>
-
-                                            <div class="mb-3">
-                                                <label class="form-label">Outline Color</label>
-                                                <div class="input-group input-group-sm">
-                                                    <span class="input-group-text">#</span>
-                                                    <input type="text" class="form-control" @bind="customClipSubtitleOptions.OutlineColor" maxlength="6" placeholder="000000">
-                                                    <input type="color" class="form-control form-control-color" value="@("#" + customClipSubtitleOptions.OutlineColor)"
-                                                           @onchange="@(e => customClipSubtitleOptions.OutlineColor = e.Value?.ToString()?.TrimStart('#') ?? "000000")" style="max-width: 50px;">
-                                                </div>
-                                            </div>
-
-                                            <div class="mb-3">
-                                                <label class="form-label">Outline Width: @customClipSubtitleOptions.OutlineWidth</label>
-                                                <input type="range" class="form-range" min="0" max="4"
-                                                       value="@customClipSubtitleOptions.OutlineWidth"
-                                                       @onchange="@(e => customClipSubtitleOptions.OutlineWidth = int.Parse(e.Value?.ToString() ?? "2"))">
-                                            </div>
-
-                                            <div class="mb-3">
-                                                <label class="form-label">Shadow Depth: @customClipSubtitleOptions.ShadowDepth</label>
-                                                <input type="range" class="form-range" min="0" max="4"
-                                                       value="@customClipSubtitleOptions.ShadowDepth"
-                                                       @onchange="@(e => customClipSubtitleOptions.ShadowDepth = int.Parse(e.Value?.ToString() ?? "1"))">
-                                            </div>
-
-                                            <div class="form-check">
-                                                <input class="form-check-input" type="checkbox" id="customClipAllCaps" @bind="customClipSubtitleOptions.AllCaps">
-                                                <label class="form-check-label" for="customClipAllCaps">ALL CAPS</label>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <!-- Preview -->
-                                    <div class="mt-3">
-                                        <div class="d-flex justify-content-between align-items-center mb-2">
-                                            <label class="form-label mb-0 fw-bold">Preview</label>
-                                            <button type="button" class="btn btn-sm btn-outline-primary" @onclick="GenerateCustomClipPreview" disabled="@isGeneratingCustomClipPreview">
-                                                @if (isGeneratingCustomClipPreview)
-                                                {
-                                                    <span class="spinner-border spinner-border-sm" role="status"></span>
-                                                }
-                                                else
-                                                {
-                                                    <span class="oi oi-reload"></span>
-                                                }
-                                                Generate Preview
-                                            </button>
-                                        </div>
-
-                                        @if (!string.IsNullOrEmpty(customClipPreviewFrameBase64))
-                                        {
-                                            <div class="position-relative text-center" style="background-color: #000; border-radius: 8px; overflow: hidden;">
-                                                <img src="@customClipPreviewFrameBase64" alt="Video preview" style="max-width: 100%; max-height: 300px; object-fit: contain;" />
-                                                <div class="position-absolute w-100" style="@GetCustomClipSubtitlePreviewPosition()">
-                                                    <span style="
-                                                        font-family: @customClipSubtitleOptions.FontName;
-                                                        font-size: @(Math.Max(12, customClipSubtitleOptions.FontSize / 2))px;
-                                                        color: #@customClipSubtitleOptions.PrimaryColor;
-                                                        text-shadow: @(customClipSubtitleOptions.OutlineWidth)px @(customClipSubtitleOptions.OutlineWidth)px @(customClipSubtitleOptions.ShadowDepth)px #@customClipSubtitleOptions.OutlineColor,
-                                                        -@(customClipSubtitleOptions.OutlineWidth)px -@(customClipSubtitleOptions.OutlineWidth)px @(customClipSubtitleOptions.ShadowDepth)px #@customClipSubtitleOptions.OutlineColor,
-                                                        @(customClipSubtitleOptions.OutlineWidth)px -@(customClipSubtitleOptions.OutlineWidth)px @(customClipSubtitleOptions.ShadowDepth)px #@customClipSubtitleOptions.OutlineColor,
-                                                        -@(customClipSubtitleOptions.OutlineWidth)px @(customClipSubtitleOptions.OutlineWidth)px @(customClipSubtitleOptions.ShadowDepth)px #@customClipSubtitleOptions.OutlineColor;
-                                                        @(customClipSubtitleOptions.AllCaps ? "text-transform: uppercase;" : "")
-                                                        padding: 4px 8px;
-                                                        background-color: rgba(0,0,0,0.3);
-                                                        border-radius: 4px;
-                                                        ">
-                                                        Sample subtitle text
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        }
-                                        else
-                                        {
-                                            <div class="p-3 text-center" style="background-color: #333; border-radius: 8px;">
-                                                <span style="
-                                                    font-family: @customClipSubtitleOptions.FontName;
-                                                    font-size: @(customClipSubtitleOptions.FontSize)px;
-                                                    color: #@customClipSubtitleOptions.PrimaryColor;
-                                                    text-shadow: @(customClipSubtitleOptions.OutlineWidth)px @(customClipSubtitleOptions.OutlineWidth)px @(customClipSubtitleOptions.ShadowDepth)px #@customClipSubtitleOptions.OutlineColor;
-                                                    @(customClipSubtitleOptions.AllCaps ? "text-transform: uppercase;" : "")
-                                                    ">
-                                                    Preview Subtitle Text
-                                                </span>
-                                                <p class="text-muted small mt-2 mb-0">Click "Generate Preview" to see subtitles on actual video frame</p>
-                                            </div>
-                                        }
-                                    </div>
+                        <!-- Video Preview Player -->
+                        <div class="card mb-3">
+                            <div class="card-body p-2">
+                                <div class="position-relative" style="background-color: #000;">
+                                    <video id="customSegmentVideoPlayer" class="w-100" controls preload="metadata" style="max-height: 300px;">
+                                        <source src="@(File.Exists(project.PreviewVideoPath ?? "") ? FileStreamService.GetVideoUrl(project.PreviewVideoPath) : FileStreamService.GetVideoUrl(project.VideoPath))"
+                                                type="@(File.Exists(project.PreviewVideoPath ?? "") ? GetVideoMimeType(project.PreviewVideoPath) : GetVideoMimeType(project.VideoPath))" />
+                                        Your browser does not support the video tag.
+                                    </video>
                                 </div>
+                                <div class="d-flex justify-content-between align-items-center mt-2">
+                                    <small class="text-muted">Preview Time: <span id="customSegmentCurrentTime">00:00</span></small>
+                                    <button type="button" class="btn btn-sm btn-outline-primary" @onclick="PreviewCustomSegment">
+                                        <span class="oi oi-media-play me-1"></span> Play Segment
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label fw-bold">Start Time</label>
+                                <div class="input-group input-group-sm">
+                                    <input type="text" class="form-control" @bind="customSegmentStartTime"
+                                           placeholder="00:00:00" />
+                                    <button class="btn btn-outline-primary" @onclick="SetCustomSegmentStart">
+                                        <span class="oi oi-media-step-backward"></span> Set
+                                    </button>
+                                </div>
+                                <small class="text-muted">Format: HH:MM:SS or MM:SS</small>
+                            </div>
+
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label fw-bold">End Time</label>
+                                <div class="input-group input-group-sm">
+                                    <input type="text" class="form-control" @bind="customSegmentEndTime"
+                                           placeholder="00:00:00" />
+                                    <button class="btn btn-outline-primary" @onclick="SetCustomSegmentEnd">
+                                        <span class="oi oi-media-step-forward"></span> Set
+                                    </button>
+                                </div>
+                                <small class="text-muted">Format: HH:MM:SS or MM:SS</small>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Summary</label>
+                            <input type="text" class="form-control form-control-sm" @bind="customSegmentSummary"
+                                   placeholder="Optional - a title for this segment" />
+                        </div>
+
+                        @{
+                            var customStartTs = ParseTimeSpan(customSegmentStartTime);
+                            var customEndTs = ParseTimeSpan(customSegmentEndTime);
+                        }
+                        @if (customStartTs.HasValue && customEndTs.HasValue)
+                        {
+                            <div class="mb-3">
+                                <p class="text-muted small mb-1"><strong>Duration:</strong> @FormatDuration(customEndTs.Value - customStartTs.Value)</p>
+                                @if (customEndTs.Value <= customStartTs.Value)
+                                {
+                                    <p class="text-danger small mb-0">
+                                        <span class="oi oi-warning"></span> End time must be after start time
+                                    </p>
+                                }
+                                @if (project?.Duration.HasValue == true && customEndTs.Value > project.Duration.Value)
+                                {
+                                    <p class="text-danger small mb-0">
+                                        <span class="oi oi-warning"></span> End time exceeds video duration
+                                    </p>
+                                }
                             </div>
                         }
                     </div>
                     <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" @onclick="CancelCustomClipExtraction">Cancel</button>
-                        <button type="button" class="btn btn-success" @onclick="ConfirmExtractCustomClip" disabled="@isExtractingCustomClip">
-                            @if (isExtractingCustomClip)
+                        <button type="button" class="btn btn-secondary" @onclick="CancelCustomSegment" disabled="@isSavingCustomSegment">Cancel</button>
+                        <button type="button" class="btn btn-primary" @onclick="SaveCustomSegment"
+                                disabled="@(!IsCustomSegmentValid() || isSavingCustomSegment)">
+                            @if (isSavingCustomSegment)
                             {
-                                <span class="spinner-border spinner-border-sm" role="status"></span>
-                                <span> Extracting...</span>
+                                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
                             }
                             else
                             {
-                                <span class="oi oi-scissors me-1"></span>
-                                <span> Extract Clip</span>
+                                <span class="oi oi-check me-1"></span>
                             }
+                            Save Changes
                         </button>
                     </div>
                 </div>
@@ -1005,159 +1003,6 @@ else
                 </div>
             </div>
         </div>
-
-        <!-- Custom Clip Creator Section -->
-        <div class="card mb-4">
-            <div class="card-header d-flex justify-content-between align-items-center"
-                 style="cursor: pointer;"
-                 data-bs-toggle="collapse"
-                 data-bs-target="#clipCreatorCollapse"
-                 aria-expanded="false"
-                 aria-controls="clipCreatorCollapse">
-                <h5 class="mb-0">
-                    <span class="oi oi-scissors me-2"></span>Custom Clip Creator
-                </h5>
-                <span class="oi oi-chevron-bottom"></span>
-            </div>
-            <div class="collapse" id="clipCreatorCollapse">
-                <div class="card-body">
-                    <div class="alert alert-info mb-3">
-                        <span class="oi oi-info me-2"></span>
-                        <small>Use the video player to find your desired start and end points, then click "Set Start" and "Set End" to capture the times. This creates a temporary clip without saving to the database.</small>
-                    </div>
-
-                    <div class="row mb-3">
-                        <div class="col-md-6">
-                            <label class="form-label fw-bold">Start Time</label>
-                            <div class="input-group">
-                                <input type="text" class="form-control" @bind="customClipStartTime"
-                                       placeholder="00:00:00" />
-                                <button class="btn btn-outline-primary" @onclick="SetCustomClipStart">
-                                    <span class="oi oi-media-step-backward"></span> Set Start
-                                </button>
-                            </div>
-                            <small class="text-muted">Format: HH:MM:SS or MM:SS</small>
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label fw-bold">End Time</label>
-                            <div class="input-group">
-                                <input type="text" class="form-control" @bind="customClipEndTime"
-                                       placeholder="00:00:00" />
-                                <button class="btn btn-outline-primary" @onclick="SetCustomClipEnd">
-                                    <span class="oi oi-media-step-forward"></span> Set End
-                                </button>
-                            </div>
-                            <small class="text-muted">Format: HH:MM:SS or MM:SS</small>
-                        </div>
-                    </div>
-
-                    @if (!string.IsNullOrEmpty(customClipStartTime) && !string.IsNullOrEmpty(customClipEndTime))
-                    {
-                        var startTs = ParseTimeSpan(customClipStartTime);
-                        var endTs = ParseTimeSpan(customClipEndTime);
-
-                        if (startTs.HasValue && endTs.HasValue && endTs > startTs)
-                        {
-                            var duration = endTs.Value - startTs.Value;
-                            <div class="alert alert-success">
-                                <strong>Preview:</strong> Clip from @FormatDuration(startTs.Value) to @FormatDuration(endTs.Value)
-                                <br />
-                                <strong>Duration:</strong> @FormatDuration(duration)
-                            </div>
-
-                            <div class="d-flex gap-2 flex-wrap">
-                                <button class="btn btn-primary" @onclick="PreviewCustomClip">
-                                    <span class="oi oi-media-play"></span> Preview
-                                </button>
-                                <button class="btn btn-success" @onclick="ShowCustomClipOptions" disabled="@isExtractingCustomClip">
-                                    @if (isExtractingCustomClip)
-                                    {
-                                        <span class="spinner-border spinner-border-sm" role="status"></span>
-                                    }
-                                    else
-                                    {
-                                        <span class="oi oi-scissors"></span>
-                                    }
-                                    Extract Clip...
-                                </button>
-                                <button class="btn btn-outline-secondary" @onclick="ClearCustomClip">
-                                    <span class="oi oi-x"></span> Clear
-                                </button>
-                            </div>
-
-                            @if (!string.IsNullOrEmpty(lastExtractedCustomClipPath) && File.Exists(lastExtractedCustomClipPath))
-                            {
-                                <div class="mt-3 p-3 bg-opacity-10 border border-success rounded">
-                                    <h6 class="text-success mb-2">
-                                        <span class="oi oi-check me-1"></span> Last Extracted Clip
-                                    </h6>
-                                    <p class="small text-muted mb-2">@Path.GetFileName(lastExtractedCustomClipPath)</p>
-                                    <div class="d-flex gap-2 flex-wrap">
-                                        <button class="btn btn-outline-success btn-sm" @onclick="DownloadLastCustomClip">
-                                            <span class="oi oi-data-transfer-download"></span> Download
-                                        </button>
-                                        <button class="btn btn-outline-info btn-sm" @onclick="OpenLastCustomClipFolder">
-                                            <span class="oi oi-folder-open"></span> Open Folder
-                                        </button>
-                                        @if (availablePublishers.Any())
-                                        {
-                                            <div class="dropdown d-inline-block">
-                                                <button type="button" class="btn btn-outline-primary btn-sm dropdown-toggle"
-                                                        data-bs-toggle="dropdown"
-                                                        data-bs-boundary="clippingParents"
-                                                        data-bs-popper-config='{"strategy":"fixed"}'
-                                                        aria-expanded="false">
-                                                    <span class="oi oi-share-boxed"></span> Post to
-                                                </button>
-                                                <ul class="dropdown-menu dropdown-menu-end">
-                                                    @foreach (var publisher in availablePublishers)
-                                                    {
-                                                        <li>
-                                                            <a class="dropdown-item" href="#" @onclick="() => ShowCustomClipPostDialog(publisher.PlatformName)" @onclick:preventDefault="true">
-                                                                <i class="@publisher.PlatformIcon me-2"></i>@publisher.PlatformName
-                                                                @if (publisherAuthStatus.TryGetValue(publisher.PlatformName, out var isAuth) && isAuth)
-                                                                {
-                                                                    <span class="badge bg-success ms-2">Connected</span>
-                                                                }
-                                                                else
-                                                                {
-                                                                    <span class="badge bg-secondary ms-2">Not Connected</span>
-                                                                }
-                                                            </a>
-                                                        </li>
-                                                    }
-                                                </ul>
-                                            </div>
-                                        }
-                                        <button class="btn btn-outline-warning btn-sm" @onclick="ShowCustomClipOptions" title="Re-extract with different settings">
-                                            <span class="oi oi-loop-circular"></span> Extract Again
-                                        </button>
-                                    </div>
-                                </div>
-                            }
-                        }
-                        else
-                        {
-                            <div class="alert alert-warning">
-                                Please ensure end time is after start time and both times are valid.
-                            </div>
-                        }
-                    }
-
-                    @if (isExtractingCustomClip)
-                    {
-                        <div class="mt-3">
-                            <div class="progress">
-                                <div class="progress-bar progress-bar-striped progress-bar-animated"
-                                     role="progressbar" style="width: 100%">
-                                    Extracting clip...
-                                </div>
-                            </div>
-                        </div>
-                    }
-                </div>
-            </div>
-        </div>
     }
     else if (!string.IsNullOrEmpty(project.VideoPath))
     {
@@ -1203,20 +1048,28 @@ else
                     <div class="text-center py-4">
                         <span class="oi oi-media-step-forward" style="font-size: 2rem; color: #6c757d;"></span>
                         <p class="mt-2 text-muted">No segments generated yet.</p>
-                        @if (project.Status == ProjectStatus.VideoUploaded || project.Status == ProjectStatus.TranscriptGenerated || project.Status == ProjectStatus.SegmentsGenerated || segments.Count() == 0)
-                        {
-                            <button class="btn btn-primary" @onclick="GenerateSegments" disabled="@isGeneratingSegments">
-                                @if (isGeneratingSegments)
-                                {
-                                    <span class="spinner-border spinner-border-sm" role="status"></span>
-                                }
-                                else
-                                {
-                                    <span class="oi oi-cog"></span>
-                                }
-                                Generate Segments
-                            </button>
-                        }
+                        <div class="d-flex gap-2 justify-content-center">
+                            @if (project.Status == ProjectStatus.VideoUploaded || project.Status == ProjectStatus.TranscriptGenerated || project.Status == ProjectStatus.SegmentsGenerated || segments.Count() == 0)
+                            {
+                                <button class="btn btn-primary" @onclick="GenerateSegments" disabled="@isGeneratingSegments">
+                                    @if (isGeneratingSegments)
+                                    {
+                                        <span class="spinner-border spinner-border-sm" role="status"></span>
+                                    }
+                                    else
+                                    {
+                                        <span class="oi oi-cog"></span>
+                                    }
+                                    Generate Segments
+                                </button>
+                            }
+                            @if (HasPlayableVideo)
+                            {
+                                <button class="btn btn-outline-primary" @onclick="ShowCustomSegmentModal">
+                                    <span class="oi oi-scissors"></span> Generate Custom Segment
+                                </button>
+                            }
+                        </div>
                     </div>
                 }
                 else
@@ -1233,6 +1086,12 @@ else
                             </small>
                         </div>
                         <div class="d-flex gap-2">
+                            @if (HasPlayableVideo)
+                            {
+                                <button class="btn btn-outline-primary btn-sm" @onclick="ShowCustomSegmentModal">
+                                    <span class="oi oi-scissors"></span> Generate Custom Segment
+                                </button>
+                            }
                             <button class="btn btn-outline-danger btn-sm" @onclick="ConfirmDeleteAllProjectSegments" disabled="@isDeletingAllSegments">
                                 @if (isDeletingAllSegments)
                                 {
@@ -1348,33 +1207,13 @@ else
                                                 </button>
                                                 @if (availablePublishers.Any())
                                                 {
-                                                    <div class="dropdown d-inline-block">
-                                                        <button type="button" class="btn btn-outline-primary btn-sm dropdown-toggle"
-                                                                data-bs-toggle="dropdown"
-                                                                data-bs-boundary="clippingParents"
-                                                                data-bs-popper-config='{"strategy":"fixed"}'
-                                                                aria-expanded="false">
-                                                            <span class="oi oi-share-boxed"></span> Post to
-                                                        </button>
-                                                        <ul class="dropdown-menu dropdown-menu-end">
-                                                            @foreach (var publisher in availablePublishers)
-                                                            {
-                                                                <li>
-                                                                    <a class="dropdown-item" href="#" @onclick="() => ShowPostDialog(segment, publisher.PlatformName)" @onclick:preventDefault="true">
-                                                                        <i class="@publisher.PlatformIcon me-2"></i>@publisher.PlatformName
-                                                                        @if (publisherAuthStatus.TryGetValue(publisher.PlatformName, out var isAuth) && isAuth)
-                                                                        {
-                                                                            <span class="badge bg-success ms-2">Connected</span>
-                                                                        }
-                                                                        else
-                                                                        {
-                                                                            <span class="badge bg-secondary ms-2">Not Connected</span>
-                                                                        }
-                                                                    </a>
-                                                                </li>
-                                                            }
-                                                        </ul>
-                                                    </div>
+                                                    <button class="btn btn-outline-primary btn-sm" @onclick="() => ShowDescriptionDialog(segment)" title="Write the description, then post to a channel">
+                                                        <span class="oi oi-share-boxed"></span> Describe &amp; Post
+                                                        @if (HasSavedDescription(segment))
+                                                        {
+                                                            <span class="badge bg-info ms-1" title="This clip already has a saved description">&#10003;</span>
+                                                        }
+                                                    </button>
                                                 }
                                             }
                                             <button class="btn btn-outline-danger btn-sm" @onclick="() => ConfirmDeleteSegment(segment)">
@@ -1410,20 +1249,6 @@ else
     // Extraction tracking
     private int? extractingSegmentId = null;
 
-    // Custom clip tracking
-    private string customClipStartTime = string.Empty;
-    private string customClipEndTime = string.Empty;
-    private bool isExtractingCustomClip = false;
-    private string? lastExtractedCustomClipPath = null;
-    private bool showCustomClipOptionsModal = false;
-
-    // Custom clip subtitle options (separate from segment subtitle options)
-    private SubtitleOptions customClipSubtitleOptions = new();
-    private AspectRatioMode customClipAspectRatioMode = AspectRatioMode.VerticalStackPodcast;
-    private string customClipPreviewFrameBase64 = string.Empty;
-    private bool isGeneratingCustomClipPreview = false;
-    private AspectRatioMode? customClipPreviewAspectRatioMode = null;
-
     // Subtitle options
     private SubtitleOptions subtitleOptions = new();
     private bool showSubtitleOptionsModal = false;
@@ -1448,7 +1273,17 @@ else
     private string selectedPlatformName = "";
     private VideoValidationResult? videoValidationResult;
 
-    // Post form fields
+    // Post description generator - the reusable copy saved on the segment
+    private bool showDescriptionModal = false;
+    private Segment? selectedSegmentForDescription;
+    private string descriptionTitle = "";
+    private string? descriptionBody = "";
+    private string descriptionHashtags = "";
+    private bool isSavingDescription = false;
+    private string descriptionSaveStatus = "";
+    private string descriptionSaveError = "";
+
+    // Post form fields - start from the saved description, edits stay local to the one post
     private string postTitle = "";
     private string? postDescription = "";
     private string postHashtags = "";
@@ -1475,6 +1310,16 @@ else
     private Segment? segmentForEdit = null;
     private string editSegmentStartTime = string.Empty;
     private string editSegmentEndTime = string.Empty;
+
+    // Custom segment state
+    private bool showCustomSegmentModal = false;
+    private string customSegmentStartTime = string.Empty;
+    private string customSegmentEndTime = string.Empty;
+    private string customSegmentSummary = string.Empty;
+    private bool isSavingCustomSegment = false;
+
+    private bool HasPlayableVideo =>
+        !string.IsNullOrEmpty(project?.VideoPath) && File.Exists(project.VideoPath);
 
     protected override async Task OnInitializedAsync()
     {
@@ -2361,38 +2206,6 @@ else
         }
     }
 
-    private async Task SetCustomClipStart()
-    {
-        try
-        {
-            var currentTime = await JSRuntime.InvokeAsync<double>("getCurrentVideoTime");
-            var timeSpan = TimeSpan.FromSeconds(currentTime);
-            customClipStartTime = FormatDuration(timeSpan);
-            StateHasChanged();
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error setting custom clip start: {ex.Message}");
-            await JSRuntime.InvokeVoidAsync("alert", "Failed to get current video time.");
-        }
-    }
-
-    private async Task SetCustomClipEnd()
-    {
-        try
-        {
-            var currentTime = await JSRuntime.InvokeAsync<double>("getCurrentVideoTime");
-            var timeSpan = TimeSpan.FromSeconds(currentTime);
-            customClipEndTime = FormatDuration(timeSpan);
-            StateHasChanged();
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error setting custom clip end: {ex.Message}");
-            await JSRuntime.InvokeVoidAsync("alert", "Failed to get current video time.");
-        }
-    }
-
     private TimeSpan? ParseTimeSpan(string timeString)
     {
         if (string.IsNullOrWhiteSpace(timeString))
@@ -2426,230 +2239,6 @@ else
         catch
         {
             return null;
-        }
-    }
-
-    private async Task PreviewCustomClip()
-    {
-        var startTs = ParseTimeSpan(customClipStartTime);
-        if (startTs.HasValue)
-        {
-            await SeekToTime(startTs.Value);
-        }
-    }
-
-    private void ShowCustomClipOptions()
-    {
-        if (string.IsNullOrEmpty(customClipStartTime) || string.IsNullOrEmpty(customClipEndTime))
-            return;
-
-        var startTs = ParseTimeSpan(customClipStartTime);
-        var endTs = ParseTimeSpan(customClipEndTime);
-
-        if (!startTs.HasValue || !endTs.HasValue || endTs <= startTs)
-            return;
-
-        // Reset preview state
-        customClipPreviewFrameBase64 = string.Empty;
-        customClipPreviewAspectRatioMode = null;
-
-        showCustomClipOptionsModal = true;
-        StateHasChanged();
-    }
-
-    private void CancelCustomClipExtraction()
-    {
-        showCustomClipOptionsModal = false;
-        customClipPreviewFrameBase64 = string.Empty;
-        customClipPreviewAspectRatioMode = null;
-        StateHasChanged();
-    }
-
-    private async Task ConfirmExtractCustomClip()
-    {
-        if (project == null || isExtractingCustomClip)
-            return;
-
-        var startTs = ParseTimeSpan(customClipStartTime);
-        var endTs = ParseTimeSpan(customClipEndTime);
-
-        if (!startTs.HasValue || !endTs.HasValue || endTs <= startTs)
-        {
-            await JSRuntime.InvokeVoidAsync("alert", "Invalid start or end time.");
-            return;
-        }
-
-        try
-        {
-            isExtractingCustomClip = true;
-            StateHasChanged();
-
-            // Create a segment and save it to the database
-            var customSegment = new Segment
-            {
-                ProjectId = project.Id,
-                StartTime = startTs.Value,
-                EndTime = endTs.Value,
-                Summary = $"Custom Clip ({FormatDuration(startTs.Value)} - {FormatDuration(endTs.Value)})",
-                TranscriptText = "",
-                Status = SegmentStatus.Extracting
-            };
-
-            // Save the segment to the database
-            customSegment = await SegmentService.CreateSegmentAsync(customSegment);
-
-            var result = await VideoExtractionService.ExtractSegmentAsync(
-                project,
-                customSegment,
-                customClipAspectRatioMode,
-                customClipSubtitleOptions.Enabled ? customClipSubtitleOptions : null);
-
-            if (result.Success && !string.IsNullOrEmpty(result.ClipPath))
-            {
-                // Update the segment with the clip path and status
-                customSegment.ClipPath = result.ClipPath;
-                customSegment.Status = SegmentStatus.Extracted;
-                await SegmentService.UpdateSegmentAsync(customSegment);
-
-                // Store the path for later use (download, post)
-                lastExtractedCustomClipPath = result.ClipPath;
-
-                showCustomClipOptionsModal = false;
-
-                // Reload segments to show the new custom clip in the list
-                await LoadProject();
-
-                await JSRuntime.InvokeVoidAsync("alert", "Clip extracted successfully and saved to segments! You can now download or post it.");
-            }
-            else
-            {
-                // Mark segment as failed if extraction failed
-                customSegment.Status = SegmentStatus.Failed;
-                await SegmentService.UpdateSegmentAsync(customSegment);
-
-                await JSRuntime.InvokeVoidAsync("alert", $"Extraction failed: {result.Error}");
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error extracting custom clip: {ex.Message}");
-            await JSRuntime.InvokeVoidAsync("alert", $"Failed to extract clip: {ex.Message}");
-        }
-        finally
-        {
-            isExtractingCustomClip = false;
-            StateHasChanged();
-        }
-    }
-
-    private async Task DownloadLastCustomClip()
-    {
-        if (string.IsNullOrEmpty(lastExtractedCustomClipPath) || !File.Exists(lastExtractedCustomClipPath))
-        {
-            await JSRuntime.InvokeVoidAsync("alert", "Clip file not found.");
-            return;
-        }
-
-        try
-        {
-            var fileName = Path.GetFileName(lastExtractedCustomClipPath);
-            var fileBytes = await File.ReadAllBytesAsync(lastExtractedCustomClipPath);
-            var base64 = Convert.ToBase64String(fileBytes);
-
-            await JSRuntime.InvokeVoidAsync("downloadFile", fileName, base64);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error downloading clip: {ex.Message}");
-            await JSRuntime.InvokeVoidAsync("alert", "Failed to download clip.");
-        }
-    }
-
-    private async Task OpenLastCustomClipFolder()
-    {
-        if (string.IsNullOrEmpty(lastExtractedCustomClipPath) || !File.Exists(lastExtractedCustomClipPath))
-        {
-            await JSRuntime.InvokeVoidAsync("alert", "Clip file not found.");
-            return;
-        }
-
-        var success = await PlatformFileService.OpenFolderAndSelectFileAsync(lastExtractedCustomClipPath);
-
-        if (!success)
-        {
-            await JSRuntime.InvokeVoidAsync("alert", $"Clip location: {lastExtractedCustomClipPath}");
-        }
-    }
-
-    private async Task ShowCustomClipPostDialog(string platformName)
-    {
-        if (string.IsNullOrEmpty(lastExtractedCustomClipPath) || !File.Exists(lastExtractedCustomClipPath))
-        {
-            await JSRuntime.InvokeVoidAsync("alert", "Clip file not found. Please extract the clip first.");
-            return;
-        }
-
-        // Create a temporary segment to use with the existing post dialog
-        var tempSegment = new Segment
-        {
-            ProjectId = project?.Id ?? 0,
-            StartTime = ParseTimeSpan(customClipStartTime) ?? TimeSpan.Zero,
-            EndTime = ParseTimeSpan(customClipEndTime) ?? TimeSpan.Zero,
-            Summary = "Custom Clip",
-            TranscriptText = "",
-            ClipPath = lastExtractedCustomClipPath,
-            Status = SegmentStatus.Extracted
-        };
-
-        await ShowPostDialog(tempSegment, platformName);
-    }
-
-    private async Task GenerateCustomClipPreview()
-    {
-        if (project == null || isGeneratingCustomClipPreview)
-            return;
-
-        var startTs = ParseTimeSpan(customClipStartTime);
-        var endTs = ParseTimeSpan(customClipEndTime);
-
-        if (!startTs.HasValue || !endTs.HasValue)
-            return;
-
-        try
-        {
-            isGeneratingCustomClipPreview = true;
-            StateHasChanged();
-
-            // Get a timestamp from the middle of the clip
-            var midpoint = startTs.Value + (endTs.Value - startTs.Value) / 2;
-
-            // Extract frame from video with the selected aspect ratio transformation
-            customClipPreviewFrameBase64 = await FileStreamService.ExtractFrameAsBase64Async(
-                project.VideoPath,
-                midpoint,
-                customClipAspectRatioMode);
-
-            // Track which aspect ratio was used for this preview
-            customClipPreviewAspectRatioMode = customClipAspectRatioMode;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error generating preview: {ex.Message}");
-        }
-        finally
-        {
-            isGeneratingCustomClipPreview = false;
-            StateHasChanged();
-        }
-    }
-
-    private void OnCustomClipAspectRatioChanged()
-    {
-        // Clear the preview when aspect ratio changes so user knows to regenerate
-        if (customClipPreviewAspectRatioMode != customClipAspectRatioMode)
-        {
-            customClipPreviewFrameBase64 = string.Empty;
-            customClipPreviewAspectRatioMode = null;
         }
     }
 
@@ -2791,25 +2380,255 @@ else
         }
     }
 
-
-    private string GetCustomClipSubtitlePreviewPosition()
+    // Custom Segment Methods
+    private async Task ShowCustomSegmentModal()
     {
-        return customClipSubtitleOptions.Position switch
-        {
-            SubtitlePosition.Top => $"top: {Math.Max(5, customClipSubtitleOptions.MarginVertical / 4)}px; left: 0;",
-            SubtitlePosition.Middle => "top: 50%; left: 0; transform: translateY(-50%);",
-            _ => $"bottom: {Math.Max(5, customClipSubtitleOptions.MarginVertical / 4)}px; left: 0;" // Bottom
-        };
+        // Seed the times from wherever the main player currently is
+        var currentTime = await GetCurrentVideoTime();
+        customSegmentStartTime = FormatDuration(TimeSpan.FromSeconds(currentTime));
+        customSegmentEndTime = string.Empty;
+        customSegmentSummary = string.Empty;
+        showCustomSegmentModal = true;
+        StateHasChanged();
+
+        // Wait for the modal to render, then initialize the video player
+        await Task.Delay(100);
+        await InitializeCustomSegmentVideoPlayer();
     }
 
-    private void ClearCustomClip()
+    private void CancelCustomSegment()
     {
-        customClipStartTime = string.Empty;
-        customClipEndTime = string.Empty;
-        lastExtractedCustomClipPath = null;
-        customClipPreviewFrameBase64 = string.Empty;
-        customClipPreviewAspectRatioMode = null;
+        showCustomSegmentModal = false;
+        customSegmentStartTime = string.Empty;
+        customSegmentEndTime = string.Empty;
+        customSegmentSummary = string.Empty;
         StateHasChanged();
+    }
+
+    private async Task SetCustomSegmentStart()
+    {
+        var currentTime = await JSRuntime.InvokeAsync<double>("getCustomSegmentVideoTime");
+        customSegmentStartTime = FormatDuration(TimeSpan.FromSeconds(currentTime));
+        StateHasChanged();
+    }
+
+    private async Task SetCustomSegmentEnd()
+    {
+        var currentTime = await JSRuntime.InvokeAsync<double>("getCustomSegmentVideoTime");
+        customSegmentEndTime = FormatDuration(TimeSpan.FromSeconds(currentTime));
+        StateHasChanged();
+    }
+
+    private bool IsCustomSegmentValid()
+    {
+        var startTs = ParseTimeSpan(customSegmentStartTime);
+        var endTs = ParseTimeSpan(customSegmentEndTime);
+
+        if (!startTs.HasValue || !endTs.HasValue)
+            return false;
+
+        if (endTs.Value <= startTs.Value)
+            return false;
+
+        if (project?.Duration.HasValue == true && endTs.Value > project.Duration.Value)
+            return false;
+
+        return true;
+    }
+
+    private async Task InitializeCustomSegmentVideoPlayer()
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("initializeCustomSegmentVideoPlayer");
+
+            var startTs = ParseTimeSpan(customSegmentStartTime);
+            if (startTs.HasValue)
+            {
+                await JSRuntime.InvokeVoidAsync("seekCustomSegmentVideoToTime", startTs.Value.TotalSeconds);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error initializing custom segment video player: {ex.Message}");
+        }
+    }
+
+    private async Task PreviewCustomSegment()
+    {
+        var startTs = ParseTimeSpan(customSegmentStartTime);
+        var endTs = ParseTimeSpan(customSegmentEndTime);
+
+        if (!startTs.HasValue || !endTs.HasValue || endTs.Value <= startTs.Value)
+            return;
+
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("playCustomSegmentRange", startTs.Value.TotalSeconds, endTs.Value.TotalSeconds);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error previewing custom segment: {ex.Message}");
+        }
+    }
+
+    private async Task SaveCustomSegment()
+    {
+        if (project == null || isSavingCustomSegment || !IsCustomSegmentValid())
+            return;
+
+        var startTs = ParseTimeSpan(customSegmentStartTime);
+        var endTs = ParseTimeSpan(customSegmentEndTime);
+
+        if (!startTs.HasValue || !endTs.HasValue)
+            return;
+
+        try
+        {
+            isSavingCustomSegment = true;
+            StateHasChanged();
+
+            var summary = string.IsNullOrWhiteSpace(customSegmentSummary)
+                ? $"Custom Segment ({FormatDuration(startTs.Value)} - {FormatDuration(endTs.Value)})"
+                : customSegmentSummary.Trim();
+
+            await SegmentService.CreateSegmentAsync(new Segment
+            {
+                ProjectId = project.Id,
+                StartTime = startTs.Value,
+                EndTime = endTs.Value,
+                Summary = summary,
+                TranscriptText = "",
+                Status = SegmentStatus.Approved
+            });
+
+            showCustomSegmentModal = false;
+            customSegmentStartTime = string.Empty;
+            customSegmentEndTime = string.Empty;
+            customSegmentSummary = string.Empty;
+
+            // Reload segments so the new custom segment shows up in the list
+            await LoadProject();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error saving custom segment: {ex.Message}");
+            await JSRuntime.InvokeVoidAsync("alert", $"Failed to save custom segment: {ex.Message}");
+        }
+        finally
+        {
+            isSavingCustomSegment = false;
+            StateHasChanged();
+        }
+    }
+
+    // Post Description Methods - generating and storing copy is separate from publishing it
+    private static bool HasSavedDescription(Segment segment) =>
+        !string.IsNullOrWhiteSpace(segment.PostTitle) || !string.IsNullOrWhiteSpace(segment.PostDescription);
+
+    private void ShowDescriptionDialog(Segment segment)
+    {
+        selectedSegmentForDescription = segment;
+
+        descriptionTitle = !string.IsNullOrWhiteSpace(segment.PostTitle) ? segment.PostTitle : segment.Summary;
+        descriptionBody = segment.PostDescription ?? "";
+        descriptionHashtags = segment.PostHashtags ?? "";
+
+        descriptionSaveStatus = "";
+        descriptionSaveError = "";
+        contentGenerationError = "";
+
+        showDescriptionModal = true;
+        StateHasChanged();
+    }
+
+    private void CloseDescriptionDialog()
+    {
+        showDescriptionModal = false;
+        selectedSegmentForDescription = null;
+        contentGenerationError = "";
+        descriptionSaveStatus = "";
+        descriptionSaveError = "";
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Persists the reusable copy on the segment. Returns false when the save failed.
+    /// </summary>
+    private async Task<bool> PersistDescription()
+    {
+        if (selectedSegmentForDescription == null)
+        {
+            return false;
+        }
+
+        try
+        {
+            isSavingDescription = true;
+            descriptionSaveError = "";
+            StateHasChanged();
+
+            selectedSegmentForDescription.PostTitle = descriptionTitle;
+            selectedSegmentForDescription.PostDescription = descriptionBody;
+            selectedSegmentForDescription.PostHashtags = descriptionHashtags;
+
+            await SegmentService.UpdateSegmentAsync(selectedSegmentForDescription);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            descriptionSaveError = $"Failed to save description: {ex.Message}";
+            return false;
+        }
+        finally
+        {
+            isSavingDescription = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SaveDescription()
+    {
+        descriptionSaveStatus = "";
+
+        if (await PersistDescription())
+        {
+            descriptionSaveStatus = "Description saved";
+        }
+
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Saves the copy, then hands off to the publishing dialog for the chosen channel.
+    /// </summary>
+    private async Task StartPostFromDescription(string platformName)
+    {
+        var segment = selectedSegmentForDescription;
+
+        if (segment == null || !await PersistDescription())
+        {
+            return;
+        }
+
+        showDescriptionModal = false;
+        await ShowPostDialog(segment, platformName);
+    }
+
+    /// <summary>
+    /// Returns from the publishing dialog to the description generator, keeping the segment loaded.
+    /// </summary>
+    private void BackToDescription()
+    {
+        var segment = selectedSegmentForPost;
+
+        ClosePostDialog();
+
+        if (segment != null)
+        {
+            ShowDescriptionDialog(segment);
+        }
     }
 
     // Social Media Publishing Methods
@@ -2818,10 +2637,10 @@ else
         selectedSegmentForPost = segment;
         selectedPlatformName = platformName;
 
-        // Reset form
-        postTitle = segment.Summary;
-        postDescription = "";
-        postHashtags = "";
+        // Seed the form from the clip's saved description
+        postTitle = !string.IsNullOrWhiteSpace(segment.PostTitle) ? segment.PostTitle : segment.Summary;
+        postDescription = segment.PostDescription ?? "";
+        postHashtags = segment.PostHashtags ?? "";
         postPrivacy = PrivacyLevel.Public;
         allowComments = true;
         allowDuet = true;
@@ -2856,7 +2675,7 @@ else
 
     private async Task GenerateSocialMediaContent()
     {
-        if (project == null || selectedSegmentForPost == null || isGeneratingContent)
+        if (project == null || selectedSegmentForDescription == null || isGeneratingContent)
             return;
 
         try
@@ -2867,14 +2686,14 @@ else
 
             // Reload the segment from the database to ensure we have the latest transcript text
             // This is important because the transcript may have been updated during clip extraction
-            var refreshedSegment = await SegmentService.GetSegmentByIdAsync(selectedSegmentForPost.Id);
+            var refreshedSegment = await SegmentService.GetSegmentByIdAsync(selectedSegmentForDescription.Id);
             if (refreshedSegment == null)
             {
                 contentGenerationError = "Segment not found. Please refresh the page.";
                 return;
             }
 
-            // Use only the segment's transcript text for generating social media content
+            // Use only the segment's transcript text for generating the description
             // This ensures the title and description are based on the specific clip, not the entire video
             string? transcriptContent = refreshedSegment.TranscriptText;
 
@@ -2893,22 +2712,22 @@ else
                 Console.WriteLine($"AI Content Generation: {status}");
             });
 
-            // Call AI service to generate title and description
+            // Call AI service for channel-neutral copy that can be reused for every platform
             var result = await AiService.GenerateSocialMediaContentAsync(
                 transcriptContent,
-                selectedPlatformName,
                 settings,
                 progress);
 
             if (result.Success && !string.IsNullOrEmpty(result.Title))
             {
                 // Autofill the title and description
-                postTitle = result.Title;
+                descriptionTitle = result.Title;
                 if (!string.IsNullOrEmpty(result.Description))
                 {
-                    postDescription = result.Description;
+                    descriptionBody = result.Description;
                 }
                 contentGenerationError = "";
+                descriptionSaveStatus = "";
             }
             else
             {

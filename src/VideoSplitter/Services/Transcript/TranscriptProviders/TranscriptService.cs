@@ -20,33 +20,33 @@ public interface ITranscriptService
     /// Checks if the Whisper model is available for local transcription
     /// </summary>
     /// <returns>True if the model is available, false otherwise</returns>
-    Task<bool> IsWhisperModelAvailableAsync();
+    Task<bool> IsWhisperModelAvailableAsync(WhisperModelSize modelSize);
 
     /// <summary>
     /// Gets the expected path for the Whisper model file
     /// </summary>
     /// <returns>The expected model file path</returns>
-    string GetExpectedModelPath();
+    string GetExpectedModelPath(WhisperModelSize modelSize);
 
     /// <summary>
     /// Downloads the Whisper model if it's not present
     /// </summary>
     /// <param name="progress">Progress reporter for download status</param>
     /// <returns>True if download was successful or model already exists, false otherwise</returns>
-    Task<(bool Success, string? Error)> DownloadWhisperModelAsync(IProgress<string>? progress = null);
+    Task<(bool Success, string? Error)> DownloadWhisperModelAsync(WhisperModelSize modelSize, IProgress<string>? progress = null);
 
     /// <summary>
     /// Initializes and loads the Whisper model, downloading it if necessary
     /// </summary>
     /// <param name="progress">Progress reporter for initialization status</param>
     /// <returns>True if model is loaded and ready, false otherwise</returns>
-    Task<(bool Success, string? Error)> InitializeWhisperModelAsync(IProgress<string>? progress = null);
+    Task<(bool Success, string? Error)> InitializeWhisperModelAsync(WhisperModelSize modelSize, IProgress<string>? progress = null);
 
     /// <summary>
     /// Gets the download progress and status of the Whisper model
     /// </summary>
     /// <returns>Status information about the model</returns>
-    Task<(bool IsAvailable, bool IsDownloading, string Status)> GetModelStatusAsync();
+    Task<(bool IsAvailable, bool IsDownloading, string Status)> GetModelStatusAsync(WhisperModelSize modelSize);
 }
 public class TranscriptService : ITranscriptService, IDisposable
 {
@@ -156,29 +156,29 @@ public class TranscriptService : ITranscriptService, IDisposable
     }
 
     // Whisper-specific methods delegate to the Whisper provider instance
-    public async Task<bool> IsWhisperModelAvailableAsync()
+    public async Task<bool> IsWhisperModelAvailableAsync(WhisperModelSize modelSize)
     {
-        return await _whisperProvider.IsWhisperModelAvailableAsync();
+        return await _whisperProvider.IsWhisperModelAvailableAsync(modelSize);
     }
 
-    public string GetExpectedModelPath()
+    public string GetExpectedModelPath(WhisperModelSize modelSize)
     {
-        return _whisperProvider.GetExpectedModelPath();
+        return _whisperProvider.GetExpectedModelPath(modelSize);
     }
 
-    public async Task<(bool Success, string? Error)> DownloadWhisperModelAsync(IProgress<string>? progress = null)
+    public async Task<(bool Success, string? Error)> DownloadWhisperModelAsync(WhisperModelSize modelSize, IProgress<string>? progress = null)
     {
-        return await _whisperProvider.DownloadWhisperModelAsync(progress);
+        return await _whisperProvider.DownloadWhisperModelAsync(modelSize, progress);
     }
 
-    public async Task<(bool Success, string? Error)> InitializeWhisperModelAsync(IProgress<string>? progress = null)
+    public async Task<(bool Success, string? Error)> InitializeWhisperModelAsync(WhisperModelSize modelSize, IProgress<string>? progress = null)
     {
-        return await _whisperProvider.InitializeWhisperModelAsync(progress);
+        return await _whisperProvider.InitializeWhisperModelAsync(modelSize, progress);
     }
 
-    public async Task<(bool IsAvailable, bool IsDownloading, string Status)> GetModelStatusAsync()
+    public async Task<(bool IsAvailable, bool IsDownloading, string Status)> GetModelStatusAsync(WhisperModelSize modelSize)
     {
-        return await _whisperProvider.GetStatusAsync();
+        return await _whisperProvider.GetStatusAsync(modelSize);
     }
 
     public void Dispose()

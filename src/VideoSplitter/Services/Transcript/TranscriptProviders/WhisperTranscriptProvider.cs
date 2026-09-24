@@ -24,10 +24,21 @@ public class WhisperTranscriptProvider : TranscriptProviderBase, IDisposable
         ["ggml-large-v3.bin"] = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin"
     };
 
+    private WhisperModelSize _loadedModelSize;
+
     public WhisperTranscriptProvider(HttpClient httpClient)
     {
         _httpClient = httpClient;
     }
+
+    private static string GetModelFileName(WhisperModelSize modelSize) => modelSize switch
+    {
+        WhisperModelSize.Tiny => "ggml-tiny.bin",
+        WhisperModelSize.Base => "ggml-base.bin",
+        WhisperModelSize.Small => "ggml-small.bin",
+        WhisperModelSize.Large => "ggml-large-v3.bin",
+        _ => "ggml-base.bin"
+    };
 
     public override bool IsConfigured(AppSettings settings)
     {
@@ -44,7 +55,7 @@ public class WhisperTranscriptProvider : TranscriptProviderBase, IDisposable
         progress?.Report("Starting local Whisper.NET transcript generation...");
 
         // Check if Whisper model is available, initialize if needed
-        var modelStatus = await GetStatusAsync();
+        var modelStatus = await GetStatusAsync(settings.Whisper.ModelSize);
         if (!modelStatus.IsAvailable)
         {
             return (false, null, "Whisper model not found. Please download and initialize the model in Settings.");
@@ -58,13 +69,13 @@ public class WhisperTranscriptProvider : TranscriptProviderBase, IDisposable
 
         progress?.Report("Generating transcript with Whisper.NET...");
 
-        var whisperResult = await RunWhisperAsync(audioPath, transcriptPath, progress);
+        var whisperResult = await RunWhisperAsync(audioPath, transcriptPath, settings.Whisper.ModelSize, progress);
         return whisperResult;
     }
 
-    public override async Task<(bool IsAvailable, bool IsDownloading, string Status)> GetStatusAsync()
+    public async Task<(bool IsAvailable, bool IsDownloading, string Status)> GetStatusAsync(WhisperModelSize modelSize)
     {
-        var isAvailable = await IsWhisperModelAvailableAsync();
+        var isAvailable = await IsWhisperModelAvailableAsync(modelSize);
 
         string status;
         if (_isDownloading)
@@ -73,7 +84,7 @@ public class WhisperTranscriptProvider : TranscriptProviderBase, IDisposable
         }
         else if (isAvailable)
         {
-            status = _whisperFactory != null ? "Model loaded and ready" : "Model file available";
+            status = _whisperFactory != null && _loadedModelSize == modelSize ? "Model loaded and ready" : "Model file available";
         }
         else
         {
@@ -83,15 +94,20 @@ public class WhisperTranscriptProvider : TranscriptProviderBase, IDisposable
         return (isAvailable, _isDownloading, status);
     }
 
+    public override Task<(bool IsAvailable, bool IsDownloading, string Status)> GetStatusAsync()
+    {
+        return GetStatusAsync(WhisperModelSize.Base);
+    }
+
     /// <summary>
     /// Downloads the Whisper model if it's not present
     /// </summary>
-    public async Task<(bool Success, string? Error)> DownloadWhisperModelAsync(IProgress<string>? progress = null)
+    public async Task<(bool Success, string? Error)> DownloadWhisperModelAsync(WhisperModelSize modelSize, IProgress<string>? progress = null)
     {
         await _downloadSemaphore.WaitAsync();
         try
         {
-            var modelPath = GetExpectedModelPath();
+            var modelPath = GetExpectedModelPath(modelSize);
 
             if (File.Exists(modelPath))
             {
@@ -109,8 +125,7 @@ public class WhisperTranscriptProvider : TranscriptProviderBase, IDisposable
                 Directory.CreateDirectory(modelDirectory);
             }
 
-            // Download the base model (around 142MB)
-            var modelFileName = "ggml-large-v3.bin";
+            var modelFileName = GetModelFileName(modelSize);
             var downloadUrl = _modelUrls[modelFileName];
 
             progress?.Report($"Downloading {modelFileName} from Hugging Face...");
@@ -181,21 +196,21 @@ public class WhisperTranscriptProvider : TranscriptProviderBase, IDisposable
     /// <summary>
     /// Initializes and loads the Whisper model, downloading it if necessary
     /// </summary>
-    public async Task<(bool Success, string? Error)> InitializeWhisperModelAsync(IProgress<string>? progress = null)
+    public async Task<(bool Success, string? Error)> InitializeWhisperModelAsync(WhisperModelSize modelSize, IProgress<string>? progress = null)
     {
         try
         {
             progress?.Report("Checking Whisper model availability...");
 
             // Check if model is already loaded
-            if (_whisperFactory != null)
+            if (_whisperFactory != null && _loadedModelSize == modelSize)
             {
                 progress?.Report("Whisper model is already loaded and ready.");
                 return (true, null);
             }
 
             // Check if model file exists
-            var modelAvailable = await IsWhisperModelAvailableAsync();
+            var modelAvailable = await IsWhisperModelAvailableAsync(modelSize);
             if (!modelAvailable)
             {
                 return (false, "Whisper model not found. Please download the model first.");
@@ -203,7 +218,7 @@ public class WhisperTranscriptProvider : TranscriptProviderBase, IDisposable
 
             // Load the model
             progress?.Report("Loading Whisper model...");
-            await GetWhisperFactoryAsync();
+            await GetWhisperFactoryAsync(modelSize);
 
             progress?.Report("Whisper model loaded successfully!");
             return (true, null);
@@ -217,19 +232,20 @@ public class WhisperTranscriptProvider : TranscriptProviderBase, IDisposable
     /// <summary>
     /// Checks if the Whisper model is available for local transcription
     /// </summary>
-    public async Task<bool> IsWhisperModelAvailableAsync()
+    public async Task<bool> IsWhisperModelAvailableAsync(WhisperModelSize modelSize)
     {
         try
         {
-            var modelPath = GetExpectedModelPath();
+            var modelFileName = GetModelFileName(modelSize);
+            var modelPath = GetExpectedModelPath(modelSize);
             if (!File.Exists(modelPath))
             {
                 // Try alternative locations
                 var alternativePaths = new[]
                 {
-                    Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ggml-large-v3.bin"),
-                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "whisper", "ggml-large-v3.bin"),
-                    "ggml-large-v3.bin" // Current directory
+                    Path.Combine(AppDomain.CurrentDomain.BaseDirectory, modelFileName),
+                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "whisper", modelFileName),
+                    modelFileName // Current directory
                 };
 
                 foreach (var altPath in alternativePaths)
@@ -255,29 +271,31 @@ public class WhisperTranscriptProvider : TranscriptProviderBase, IDisposable
     /// <summary>
     /// Gets the expected path for the Whisper model file
     /// </summary>
-    public string GetExpectedModelPath()
+    public string GetExpectedModelPath(WhisperModelSize modelSize)
     {
-        return Path.Combine(FileSystem.Current.AppDataDirectory, "ggml-large-v3.bin");
+        return Path.Combine(FileSystem.Current.AppDataDirectory, GetModelFileName(modelSize));
     }
 
-    private async Task<WhisperFactory> GetWhisperFactoryAsync()
+    private async Task<WhisperFactory> GetWhisperFactoryAsync(WhisperModelSize modelSize)
     {
-        if (_whisperFactory != null)
+        if (_whisperFactory != null && _loadedModelSize == modelSize)
             return _whisperFactory;
 
         try
         {
+            var modelFileName = GetModelFileName(modelSize);
+
             // Check for model in app data directory first
-            var modelPath = Path.Combine(FileSystem.Current.AppDataDirectory, "ggml-large-v3.bin");
+            var modelPath = Path.Combine(FileSystem.Current.AppDataDirectory, modelFileName);
 
             if (!File.Exists(modelPath))
             {
                 // Try common model locations
                 var alternativePaths = new[]
                 {
-                    Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ggml-large-v3.bin"),
-                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "whisper", "ggml-large-v3.bin"),
-                    "ggml-large-v3.bin" // Current directory
+                    Path.Combine(AppDomain.CurrentDomain.BaseDirectory, modelFileName),
+                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "whisper", modelFileName),
+                    modelFileName // Current directory
                 };
 
                 foreach (var altPath in alternativePaths)
@@ -293,11 +311,13 @@ public class WhisperTranscriptProvider : TranscriptProviderBase, IDisposable
                 {
                     throw new FileNotFoundException(
                         "Whisper model not found. Please use the Settings page to download the model. " +
-                        $"Expected location: {Path.Combine(FileSystem.Current.AppDataDirectory, "ggml-large-v3.bin")}");
+                        $"Expected location: {Path.Combine(FileSystem.Current.AppDataDirectory, modelFileName)}");
                 }
             }
 
+            _whisperFactory?.Dispose();
             _whisperFactory = WhisperFactory.FromPath(modelPath);
+            _loadedModelSize = modelSize;
             return _whisperFactory;
         }
         catch (Exception ex)
@@ -310,13 +330,14 @@ public class WhisperTranscriptProvider : TranscriptProviderBase, IDisposable
     private async Task<(bool Success, string? TranscriptPath, string? Error)> RunWhisperAsync(
         string audioPath,
         string transcriptPath,
+        WhisperModelSize modelSize,
         IProgress<string>? progress = null)
     {
         try
         {
             progress?.Report("Initializing Whisper.NET...");
 
-            var whisperFactory = await GetWhisperFactoryAsync();
+            var whisperFactory = await GetWhisperFactoryAsync(modelSize);
 
             progress?.Report("Loading and converting audio file...");
 

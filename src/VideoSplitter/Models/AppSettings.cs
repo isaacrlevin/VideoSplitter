@@ -8,6 +8,8 @@ public class AppSettings
     // Transcript Settings
     public TranscriptProvider TranscriptProvider { get; set; } = TranscriptProvider.Local;
 
+    public WhisperSettings Whisper { get; set; } = new();
+
     public AzureSpeechSettings AzureSpeech { get; set; } = new();
 
     // LLM Settings
@@ -78,6 +80,19 @@ public class AzureSpeechSettings
 {
     public string? AzureSpeechApiKey { get; set; }
     public string? AzureSpeechRegion { get; set; }
+}
+
+public class WhisperSettings
+{
+    public WhisperModelSize ModelSize { get; set; } = WhisperModelSize.Base;
+}
+
+public enum WhisperModelSize
+{
+    Tiny,
+    Base,
+    Small,
+    Large
 }
 
 public abstract class LlmSettingsBase

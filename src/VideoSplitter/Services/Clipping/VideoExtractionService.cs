@@ -201,10 +201,28 @@ public class VideoExtractionService : IVideoExtractionService
                 var transcriptProvider = new TranscriptProviderFactory(_httpClient)
                     .GetProvider(appSettings.TranscriptProvider);
 
+                // For local Whisper transcription, prefer the largest already-downloaded model
+                // for clip subtitles (accuracy matters more here than for the quick pass over the
+                // full video), rather than mutating the user's configured selection.
+                var clipTranscriptSettings = appSettings;
+                if (appSettings.TranscriptProvider == TranscriptProvider.Local)
+                {
+                    var largestDownloadedModel = await GetLargestDownloadedWhisperModelSizeAsync(appSettings.Whisper.ModelSize);
+                    if (largestDownloadedModel != appSettings.Whisper.ModelSize)
+                    {
+                        clipTranscriptSettings = new AppSettings
+                        {
+                            TranscriptProvider = appSettings.TranscriptProvider,
+                            Whisper = new WhisperSettings { ModelSize = largestDownloadedModel },
+                            AzureSpeech = appSettings.AzureSpeech
+                        };
+                    }
+                }
+
                 var transcriptResult = await transcriptProvider.GenerateTranscriptAsync(
                     tempAudioPath,       // Audio path (already in WAV 16KHz mono format)
                     tempTranscriptPath,  // Output transcript path
-                    appSettings,
+                    clipTranscriptSettings,
                     new Progress<string>(msg => { /* Progress updates */ }));
 
                 if (!transcriptResult.Success)
@@ -312,6 +330,28 @@ public class VideoExtractionService : IVideoExtractionService
             CleanupTempFile(tempTranscriptPath);
             CleanupTempFile(tempSrtPath);
         }
+    }
+
+    private static readonly WhisperModelSize[] WhisperModelSizesLargestFirst =
+    [
+        WhisperModelSize.Large,
+        WhisperModelSize.Small,
+        WhisperModelSize.Base,
+        WhisperModelSize.Tiny
+    ];
+
+    private async Task<WhisperModelSize> GetLargestDownloadedWhisperModelSizeAsync(WhisperModelSize configuredModelSize)
+    {
+        foreach (var modelSize in WhisperModelSizesLargestFirst)
+        {
+            if (await _transcriptService.IsWhisperModelAvailableAsync(modelSize))
+            {
+                return modelSize;
+            }
+        }
+
+        // Nothing downloaded yet - fall back to the configured model.
+        return configuredModelSize;
     }
 
     private static void CleanupTempFile(string? filePath)
